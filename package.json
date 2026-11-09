@@ -1,0 +1,41 @@
+{
+  "name": "@dsh/files",
+  "version": "0.1.0",
+  "description": "Host-agnostic file capability plugin with one unified adapter contract for DeepSeek Harness, zcode and similar agents.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "main": "./src/index.js",
+  "types": "./src/protocol/types.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/protocol/types.d.ts",
+      "default": "./src/index.js"
+    },
+    "./config": "./src/config.js",
+    "./protocol": "./src/protocol/commands.js",
+    "./adapters": "./src/adapters/index.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-files": "./bin/cli.mjs"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "docs/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "npm test && node scripts/check-contract.mjs",
+    "tools": "node bin/cli.mjs list-tools",
+    "describe": "node bin/cli.mjs describe",
+    "stdio": "node bin/cli.mjs stdio",
+    "mcp": "node bin/cli.mjs mcp",
+    "http": "node bin/cli.mjs http"
+  },
+  "dependencies": {}
+}
