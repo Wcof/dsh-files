@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FilePluginError, ErrorCode } from './protocol/errors.js';
 
-export const PLUGIN_VERSION = '0.1.1';
+export const PLUGIN_VERSION = '0.2.0';
 export const PROTOCOL_VERSION = 1;
 
 export const DEFAULT_LIMITS = Object.freeze({

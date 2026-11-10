@@ -10,6 +10,7 @@
  */
 
 export { createFilePlugin } from './host.js';
+export { apply, inject, name } from './dsh-plugin.js';
 
 // Configuration
 export {

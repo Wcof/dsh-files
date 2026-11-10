@@ -76,9 +76,18 @@ defineAdapter('dsh', (options = {}) => {
     return { status: 200, payload: await service.handle(parsed) };
   }
 
-  function subscribe(request, response) {
+  async function subscribe(request, response) {
     if (!isSameOrigin(request)) return jsonReply(response, 403, { ok: false, error: 'same-origin only' });
     if (streams.size >= 32) return jsonReply(response, 503, { ok: false, error: 'too many event subscribers' });
+    const watchedPath = new URL(request.url, 'http://localhost').searchParams.get('path');
+    const owner = {};
+    // Each page owns its watch; closing one page must not stop another page or tool.
+    if (watchedPath) await service.call('watch_start', { path: watchedPath }, { owner });
+    if (response.destroyed || response.writableEnded || streams.size >= 32) {
+      if (watchedPath) await service.call('watch_stop', { path: watchedPath }, { owner });
+      if (!response.destroyed && !response.writableEnded) jsonReply(response, 503, { ok: false, error: 'too many event subscribers' });
+      return;
+    }
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     response.write(': connected\n\n');
     let closed = false;
@@ -98,6 +107,7 @@ defineAdapter('dsh', (options = {}) => {
       response.off('close', close);
       response.off('error', close);
       response.end();
+      if (watchedPath) void service.call('watch_stop', { path: watchedPath }, { owner }).catch(() => {});
     }
     streams.add(close);
     response.once('close', close);

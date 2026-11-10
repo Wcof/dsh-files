@@ -1,4 +1,4 @@
-# 插件契约 · @dsh/files v0.1.1
+# 插件契约 · @dsh/files v0.2.0
 
 > 本文是插件的正式契约：边界、对外接口、输入输出、依赖项、配置项。
 > 命令级行为对照见 [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md)，智能体接入见
@@ -19,13 +19,14 @@
 - 归档列表 / 创建 / 安全解包
 - 分块导入、文件系统监听、任务取消、事件通知
 - 统一工具目录、统一校验、统一错误模型、可插拔 OS 集成
+- DSH 左侧「文件」入口和随包分发的文件管理页面，文件操作复用同源 API
 
 ### 1.2 插件不做什么（边界外）
 
 | 不做 | 原因 / 由谁负责 |
 |---|---|
-| 不渲染 UI、不提供 React 组件、不加载任何产品页面 | 宿主自绘；本插件只给能力与工具目录 |
-| 不建立 iframe / webview / 反向代理 | 旧 `@natives/dsh-files` 的做法，属于产品耦合 |
+| 不加载 Natives 或其他产品的 UI | DSH 页面由本包 `web/` 提供；其他宿主可通过 API 自绘 |
+| 不代理外部产品页面 | DSH 主面板只嵌入同源 `/dsh-files/`，不连接额外服务 |
 | 不管理会话、Cookie、CSRF、Origin、端口租约 | 宿主传输层职责；HTTP/DSH 适配器只做同源校验 |
 | 不拥有产品数据库、工作区、主题、偏好、设置 | 原 `workspace_*` / `settings_*` / `preferences_*` 命令不属于 file 能力，未纳入 |
 | 不注册 `.app`、Dock、LaunchServices、Native Messaging、登录启动项 | 不是产品，只是可插拔能力 |
@@ -82,7 +83,7 @@ plugin.tools() // [{ name: 'file_list_dir', method: 'list_dir', description,
 `callTool(service, name, args)` 是共享调用入口。默认只暴露对智能体有意义的工具
 （`tool: true`），43 个命令仍全部可通过 `call`/`handle` 调用。
 `toolOptions.prefix/include/exclude` 决定实际工具目录，`exclude` 优先，未公开工具不能通过 `tools/call` 绕过。
-DSH 原生安装入口为包导出 `@dsh/files/dsh`，见 `docs/AGENT_ADAPTERS.md`。
+DSH 原生安装入口为包根 `@dsh/files`；`@dsh/files/dsh` 保留供直接导入，但组合包 patch 必须使用包根以支持浏览器发现，见 `docs/AGENT_ADAPTERS.md`。
 
 ### 2.3 统一适配器接口
 

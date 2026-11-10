@@ -1,4 +1,4 @@
-# @dsh/files — 通用文件能力插件
+# @dsh/files -- 文件管理页面与通用文件工具
 
 把原 `AiNative/Natives` 的 file 文件模块解耦成**一个宿主无关、可独立安装运行的文件能力插件**。
 同一份能力内核、同一份工具目录、同一套校验规则，以统一方式适配 **DeepSeek Harness（DSH）**、
@@ -19,8 +19,8 @@ npm run check     # 测试 + 契约一致性门禁
 
 ### 安装到 DeepSeek Harness
 
-包内自带 `dsh.bundle`、`cordis.patch.yml` 和 `@dsh/files/dsh` Cordis 入口。
-声明 DSH 范围为 `>=0.2.2-rc.1 <0.3.0`。安装并启用后可直接调用 25 个 `file_*` 工具，使用宿主原生工具结果展示。
+包内自带 `dsh.bundle`、`cordis.patch.yml`、包根 Cordis 入口和浏览器页面。
+声明 DSH 范围为 `>=0.2.2-rc.1 <0.3.0`。安装并启用后，左侧出现「文件」，点击即可管理文件；同时提供 25 个 `file_*` 工具。
 在 DSH 侧栏打开「插件 → 添加插件」，粘贴以下 GitHub 地址，查看并安装：
 
 ```text
@@ -36,10 +36,21 @@ https://github.com/Wcof/dsh-files.git
 dsh plugin --profile desktop add git+https://github.com/Wcof/dsh-files.git
 ```
 
-重新打开桌面版后，在对话中要求列目录、读取或搜索文件即可；例如“使用 file_list_dir 列出我的 Downloads”。
+重新打开桌面版后，点击左侧「文件」进入页面；也可在对话中要求列目录、读取或搜索文件，例如“使用 file_list_dir 列出我的 Downloads”。
 Web / headless 使用各自的 profile 名称。这里的安装命令会修改所选 profile；项目检查本身不修改 profile。
 开发时可将安装地址换成本地仓库的绝对路径。插件直接运行包内 JavaScript，无需安装时构建。
 根导出仍为通用 JS API，DSH 入口不会改变其他宿主接入方式。
+
+### 从旧版升级与页面操作
+
+`0.2.0` 增加文件管理页面。已经安装 `0.1.1` 的用户，在 PlugBox 或 DSH 插件管理中检查更新并安装新版本，然后重启 DSH 窗口。旧配置中的插件行名称应为 `@dsh/files`，旧的 `@dsh/files/dsh` 子路径不能被 DSH 浏览器模块发现；如更新后仍无入口，移除旧插件登记，再使用上面的 GitHub 地址重新添加。
+
+- 左侧常用位置或顶部路径栏切换目录；双击文件夹进入，单击文件预览。
+- 新建、上传、重命名、复制、剪切粘贴、制作副本、废纸篓、ZIP 与解压都连接同一文件内核。
+- 支持名称和内容搜索、隐藏文件、排序、分批加载与目录变化自动刷新。
+- 文本可编辑保存；外部修改冲突时保留草稿并拒绝覆盖，离开未保存内容时需确认。
+- 图片、音视频和 PDF 沿用有界预览上限；PDF 还需浏览器提供原生查看器。不支持或超限时显示说明，可用系统应用打开。
+- 支持中文、英文、深浅色和窄窗口。只读模式禁用写操作；关闭系统命令时禁用系统打开、废纸篓和归档操作。
 
 需要只读模式时，在该 profile 的 patch 中为 `@dsh/files:tools` 配置
 `security: { allowWrite: false }`；支持的完整配置见 `docs/PLUGIN_CONTRACT.md`。
@@ -106,7 +117,7 @@ dsh-files http                               # loopback HTTP
 
 ```js
 // 已有 DSH 宿主只需同源 API 时：注册 5 条路由（含 SSE），UI 由宿主提供。
-// 安装组合包时，@dsh/files/dsh 另外向 ctx.tools 注册原生工具。
+// 安装组合包时，包根 @dsh/files 另外注册原生工具和文件页面。
 const dsh = await plugin.attach({ name: 'dsh', options: { hostContext: ctx } });
 
 // zcode：CLI agent 拉起子进程，NDJSON 交互

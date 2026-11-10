@@ -1,8 +1,9 @@
-/** Cordis entry point; the package root remains the host-independent JS API. */
+/** Cordis lifecycle, also exported from the package root alongside the JS API. */
 import { createFilePlugin } from './host.js';
 import { createAdapter } from './adapters/index.js';
 import { callTool } from './tool-definitions.js';
 import { asFilePluginError, safeMessage } from './protocol/errors.js';
+import { registerFilesPage } from './adapters/dsh-web.js';
 
 export const name = 'dsh-files';
 export const inject = ['tools'];
@@ -37,6 +38,7 @@ export async function apply(ctx, config = {}) {
       webContext.effect(() => () => adapter.stop());
       const handle = await adapter.start({ service: plugin.service, config: plugin.config, log: plugin.config.log });
       handle.apply(webContext);
+      webContext.effect(() => registerFilesPage(webContext), 'dsh-files:page');
     });
   } catch (error) {
     await plugin.dispose();

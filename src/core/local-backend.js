@@ -37,17 +37,24 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
     finally { if (writes.get(target) === pending) writes.delete(target); }
   }
 
-  function watch(target) {
+  function watch(target, ctx) {
     for (const [key, watcher] of watchers) if (watcher.closed) watchers.delete(key);
-    if (watchers.has(target)) return { ok: true };
+    if (watchers.has(target)) {
+      watchers.get(target).owners.add(ctx.owner);
+      return { ok: true };
+    }
     if (watchers.size >= config.limits.maxWatchers) throw new FilePluginError(ErrorCode.TOO_MANY_TASKS, 'too many filesystem watches');
-    watchers.set(target, watchDirectory(target, config, emit));
+    const watcher = watchDirectory(target, config, emit);
+    watcher.owners = new Set([ctx.owner]);
+    watchers.set(target, watcher);
     return { ok: true };
   }
 
-  function stopWatch(target) {
+  function stopWatch(target, owner) {
     const watcher = watchers.get(target);
     if (!watcher) return { ok: true };
+    watcher.owners.delete(owner);
+    if (watcher.owners.size) return { ok: true };
     watcher.close();
     watchers.delete(target);
     return { ok: true };
@@ -184,7 +191,7 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
       }
       case 'watch_stop': {
         const target = policy.authorize(params.path, Operation.READ).path;
-        return stopWatch(target);
+        return stopWatch(target, ctx.owner);
       }
 
       case 'import_probe':
@@ -225,7 +232,8 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
     },
     handle,
     async dispose() {
-      for (const target of [...watchers.keys()]) stopWatch(target);
+      for (const watcher of watchers.values()) watcher.close();
+      watchers.clear();
       await imports.dispose();
     },
   };

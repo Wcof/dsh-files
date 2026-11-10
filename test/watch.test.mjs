@@ -162,3 +162,23 @@ test('watch_stop releases the listener and watch_start is idempotent', async () 
     await cleanSandbox(sandbox);
   }
 });
+
+test('closing one watch owner preserves other pages and tool watches on the same directory', async () => {
+  const sandbox = await makeSandbox();
+  const target = path.join(sandbox.dir, 'shared');
+  await fsp.mkdir(target);
+  const { events, off } = collectEvents(sandbox.plugin.service);
+  const first = {}, second = {};
+  try {
+    await sandbox.plugin.service.call('watch_start', { path: target }, { owner: first });
+    await sandbox.plugin.service.call('watch_start', { path: target }, { owner: second });
+    await sandbox.plugin.service.call('watch_stop', { path: target }, { owner: first });
+    await fsp.writeFile(path.join(target, 'still-watched.txt'), 'x');
+    await waitForEvent(events, 1);
+    assert.equal(events[0].changes[0].kind, 'created');
+    await sandbox.plugin.service.call('watch_stop', { path: target }, { owner: second });
+    await fsp.writeFile(path.join(target, 'after-stop.txt'), 'x');
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(events.length, 1);
+  } finally { off(); await cleanSandbox(sandbox); }
+});

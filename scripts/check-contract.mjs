@@ -21,7 +21,12 @@ if (pkg.dsh?.bundle?.patch !== './cordis.patch.yml') problems.push('missing DSH 
 if (pkg.exports?.['./dsh'] !== './src/dsh-plugin.js') problems.push('missing DSH Cordis entry');
 if (!pkg.files?.includes('cordis.patch.yml')) problems.push('DSH patch is not included in package files');
 const patch = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8');
-if (!patch.includes("name: '@dsh/files/dsh'")) problems.push('DSH patch does not reference the Cordis entry');
+if (!patch.includes("name: '@dsh/files'")) problems.push('DSH patch must reference the package root for client discovery');
+if (pkg.dsh?.client?.platform !== 'web' || pkg.exports?.['./client'] !== './client.js') problems.push('missing DSH browser entry');
+for (const file of ['client.js', 'web/index.html', 'web/app.js', 'web/api.js', 'web/locale.js', 'web/styles.css', 'web/icon.svg', 'locale/zh.json', 'locale/en.json']) {
+  if (!fs.existsSync(path.join(root, file))) problems.push(`missing browser asset: ${file}`);
+}
+for (const entry of ['client.js', 'web/', 'locale/']) if (!pkg.files?.includes(entry)) problems.push(`browser asset excluded from package: ${entry}`);
 if (pkg.version !== PLUGIN_VERSION) {
   problems.push(`package.json version ${pkg.version} != config PLUGIN_VERSION ${PLUGIN_VERSION}`);
 }

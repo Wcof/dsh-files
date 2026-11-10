@@ -9,9 +9,9 @@ npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules
 npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules /absolute/path/to/unpacked/package
 ```
 
-运行时脚本使用指定 DSH 自带的 Cordis、ToolsService、原生工具执行器、WebServer 和组合包解析器。
+运行时脚本使用指定 DSH 自带的 Cordis、ToolsService、原生工具执行器、WebServer、ClientModuleRegistry 和组合包解析器。
 它创建独立上下文、临时测试目录与随机回环端口，不使用模型，不修改用户 profile，不操作用户文件。
-验证组合包 patch 与包导出解析、25 个工具注册、真实读写与结果渲染、非法输入、路径拒绝、提前取消、只读模式、HTTP 同源限制、SSE 与卸载重载。
+验证组合包 patch 与包导出解析、浏览器模块发现、文件页面与静态资产、25 个工具注册、真实读写与结果渲染、非法输入、路径拒绝、提前取消、只读模式、HTTP 同源限制、SSE 与卸载重载。
 
 当前验证对象是 macOS 上的 DeepSeek Harness `0.2.2-rc.1`，从已安装应用中提取运行包执行。
 静态分析仅用于确定实际包身份和接口，不当作运行成功的证据。
@@ -20,9 +20,13 @@ REA 静态记录：`ev_e01511af82e6d4919feb354389514e40fb2df8c0fa94e8e6e18b85b70
 
 ## GitHub 与 PlugBox 分发
 
-`0.1.1` 的运行代码提交为 `9dc5e08caf579486b468ce3265b14fe4ba4c05ee`。
-已通过 pnpm 从公开 GitHub 地址安装到隔离目录，并对实际下载的包运行上述 DSH 检查。
-[PlugBox 收录申请](https://github.com/Wcof/PlugBox/issues/4) 对应的精选索引固定到此提交；使用真实 DSH 市场服务读取已发布索引，按 `@dsh/files`、`DSH Files`、文件工具均能检索到，兼容判定与安装参数正确。
+发布使用 [GitHub 仓库](https://github.com/Wcof/dsh-files)，[PlugBox 收录申请](https://github.com/Wcof/PlugBox/issues/4) 对应的精选索引固定到版本提交。版本发布与安装验证记录集中在 `ROADMAP.md`。
+发布验证包括 npm 实际打包、pnpm 从 GitHub 固定提交隔离安装，以及对实际下载的包运行上述 DSH 检查；市场索引用真实 DSH 服务验证包名与双语搜索、兼容判定和固定提交安装参数。
+
+## 页面验证方法
+
+使用真实 DSH WebServer 与文件插件，绑定回环端口并将 `homeDir`、`stateDir` 指向隔离测试目录。浏览器覆盖目录导航、文本保存、外部修改冲突、离开草稿确认、新建、重命名、复制粘贴、Unicode 上传与取消、内容搜索、隐藏文件和图片预览。保存、冲突、上传和废纸篓结果再与磁盘内容对比。
+废纸篓与系统打开使用测试处理器；只读配置用独立实例确认按钮禁用与文本仍可预览。桌面和窄窗口分别检查布局，中英文和控制台错误一起核对。PDF 需要浏览器原生查看器；当前验证浏览器不支持内嵌显示，已验证明确失败提示与系统打开入口，不将其记录为 PDF 渲染成功。
 
 ## 一手参考
 
@@ -36,7 +40,7 @@ REA 静态记录：`ev_e01511af82e6d4919feb354389514e40fb2df8c0fa94e8e6e18b85b70
 
 ## 适用边界
 
-- “可安装的能力插件”表示 DSH 原生工具和 API；不新增侧栏或独立文件管理页面。
+- DSH 组合包提供左侧「文件」、随包页面和原生工具；直接 attach API 的其他宿主继续自行提供 UI。
 - 自动化使用真实宿主模块与执行器，未在用户正在使用的桌面 profile 内安装，也未发起付费模型对话。
 - 其他 DSH 版本和其他操作系统需要运行同一检查后再确认兼容；不能从本次结果推断所有版本无缺陷。
 - OS 功能依赖本机命令或注入钩子；验证包含真实 ZIP/TAR，但没有操作用户剪贴板、回收站或打开应用。

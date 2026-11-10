@@ -8,19 +8,19 @@ import { createRequire } from 'node:module';
 
 const modules = process.argv[2];
 if (!modules) throw new Error('Usage: npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules [package-directory]');
-const packageDir = path.resolve(process.argv[3] ?? fileURLToPath(new URL('..', import.meta.url)));
+const packageDir = await fs.realpath(path.resolve(process.argv[3] ?? fileURLToPath(new URL('..', import.meta.url))));
 const requireRuntime = createRequire(path.join(path.resolve(modules), '..', 'package.json'));
 const load = (name) => import(pathToFileURL(requireRuntime.resolve(name)).href);
-const [{ Context }, { default: SystemPrompt }, { default: Tools }, Executor, { default: WebServer }, boot] = await Promise.all([
+const [{ Context }, { default: SystemPrompt }, { default: Tools }, Executor, { default: WebServer }, boot, { ClientModuleRegistry }] = await Promise.all([
   load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
-  load('@deepseek-ai/dsh-tool-executor-native'), load('@deepseek-ai/dsh-host-webserver'), load('@deepseek-ai/dsh-app-boot'),
+  load('@deepseek-ai/dsh-tool-executor-native'), load('@deepseek-ai/dsh-host-webserver'), load('@deepseek-ai/dsh-app-boot'), load('@deepseek-ai/dsh-client-modules'),
 ]);
 const pkg = JSON.parse(await fs.readFile(path.join(packageDir, 'package.json'), 'utf8'));
 const patchPaths = boot.bundlePatchPaths(packageDir, pkg.dsh.bundle);
 const patches = boot.loadOptionalPatches('dsh-files-check', patchPaths[0]);
 const entries = boot.composeEntries([patches]);
 assert.equal(entries.length, 1);
-assert.equal(entries[0].name, '@dsh/files/dsh');
+assert.equal(entries[0].name, '@dsh/files');
 const requirePlugin = createRequire(path.join(packageDir, 'package.json'));
 const pluginModule = await import(pathToFileURL(requirePlugin.resolve(entries[0].name)).href);
 const runtimeVersion = requireRuntime('@deepseek-ai/dsh-tools/package.json').version;
@@ -36,6 +36,11 @@ try {
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 });
   const fork = ctx.plugin(pluginModule, { homeDir: dir, stateDir: path.join(dir, '.state'), security: { allowSystemCommands: false } });
   await fork.await();
+  ctx.baseUrl = pathToFileURL(path.join(packageDir, 'package.json')).href;
+  ctx.provide('loader', { entries: () => entries.map(options => ({ options, fiber: {}, disabled: false, parent: { tree: { ctx: { baseUrl: ctx.baseUrl } } } })) });
+  await ctx.plugin(ClientModuleRegistry);
+  assert.ok(ctx.clientModules.graph().entries.some(entry => entry.id === '@dsh/files'), 'DSH must discover the browser entry from the bundle patch');
+  assert.equal(ctx.clientModules.clientPath('@dsh/files'), path.join(packageDir, 'client.js'));
   assert.equal(ctx.tools.definitions().length, 25);
   let sequence = 0;
   async function call(name, args, signal = new AbortController().signal) {
@@ -63,6 +68,9 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.equal((await fetch(`${base}/agent/files/tools`).then((r) => r.json())).tools.length, 25);
+  assert.match(await fetch(`${base}/dsh-files/`).then(r => r.text()), /id="preview-content"/);
+  assert.equal((await fetch(`${base}/dsh-files/app.js`)).status, 200);
+  assert.equal((await fetch(`${base}/dsh-files`, { redirect: 'manual' })).status, 308);
   assert.equal((await fetch(`${base}/agent/files/tools`, { method: 'POST' })).status, 405);
   assert.equal((await fetch(`${base}/agent/files/tools`, { headers: { Origin: 'https://invalid.example' } })).status, 403);
   assert.equal((await fetch(`${base}/agent/files/rpc`, { method: 'POST', body: '{' })).status, 400);
@@ -77,6 +85,7 @@ try {
   await fork.dispose();
   assert.equal(ctx.tools.definitions().length, 0);
   assert.equal((await fetch(`${base}/agent/files/tools`)).status, 404);
+  assert.equal((await fetch(`${base}/dsh-files/`)).status, 404);
   assert.equal((await reader.read()).done, true);
 
   const readOnly = ctx.plugin(pluginModule, { homeDir: dir, stateDir: path.join(dir, '.state'), security: { allowWrite: false, allowSystemCommands: false } });
@@ -84,7 +93,7 @@ try {
   assert.equal((await call('file_create_file', { parent: dir, name: 'forbidden.txt' })).isError, true);
   assert.equal((await call('file_roots', {})).isError, false);
   await readOnly.dispose();
-  console.log(`DSH ${runtimeVersion}: bundle resolution, 25 tools, native read/write/errors/cancel/read-only, HTTP, SSE, unload/reload passed`);
+  console.log(`DSH ${runtimeVersion}: bundle and browser discovery, file page, 25 tools, native read/write/errors/cancel/read-only, HTTP, SSE, unload/reload passed`);
 } finally {
   await reader?.cancel().catch(() => {});
   await ctx.fiber.dispose();

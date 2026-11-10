@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>文件 · DSH Files</title><link rel="icon" href="./icon.svg"><link rel="stylesheet" href="./styles.css"></head>
+<body>
+  <div class="workspace">
+    <aside class="places">
+      <div class="brand"><img src="./icon.svg" alt="" width="36" height="36"><div><strong data-i18n="title">文件</strong><small>DSH FILES</small></div></div>
+      <p class="eyebrow" data-i18n="places">常用位置</p><nav id="roots"></nav>
+      <div class="places-foot"><span id="mode"></span><small id="version"></small></div>
+    </aside>
+    <main class="main">
+      <header class="heading"><div><h1 id="heading" data-i18n="title">文件</h1><p data-i18n="subtitle">让文件，触手可及。</p></div><div class="primary-actions"><button id="new-folder" class="button" data-i18n="newFolder">新建文件夹</button><button id="upload" class="button primary" data-i18n="upload">上传文件</button><input id="upload-input" type="file" multiple hidden></div></header>
+      <div class="navigation"><div class="nav-buttons"><button id="back" class="icon-button" data-label="back"></button><button id="forward" class="icon-button" data-label="forward"></button><button id="up" class="icon-button" data-label="up"></button><button id="refresh" class="icon-button" data-label="refresh"></button></div><form id="path-form" class="path-form"><input id="path" data-label="path" autocomplete="off" spellcheck="false"><button class="icon-button" type="submit" data-label="go"></button></form></div>
+      <div class="filters"><form id="search-form" class="search-form"><span id="search-icon" aria-hidden="true"></span><input id="search" data-label="search" autocomplete="off"><button id="clear-search" type="button" class="icon-button" data-label="clear" hidden></button><button class="button small" type="submit" data-i18n="searchAction">搜索</button></form><label class="check-label"><input id="content-search" type="checkbox"><span data-i18n="content">搜索文件内容</span></label><label class="check-label"><input id="hidden-files" type="checkbox"><span data-i18n="hidden">隐藏文件</span></label></div>
+      <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="notice-close" class="icon-button" data-label="close"></button></div>
+      <div id="transfer" class="transfer" hidden><div><span id="transfer-text"></span><button id="transfer-cancel" class="button small" data-i18n="cancel">取消</button></div><progress id="transfer-progress" max="100" value="0"></progress></div>
+      <div class="file-area">
+        <section class="listing" aria-label="Files">
+          <div class="selection-bar"><span id="selection-count"></span><div class="selection-actions"><button id="new-file" class="text-button" data-i18n="newFile">新建文本文件</button><button id="copy" class="text-button" data-i18n="copy">复制</button><button id="cut" class="text-button" data-i18n="cut">剪切</button><button id="paste" class="text-button" data-i18n="paste">粘贴</button><button id="rename" class="text-button" data-i18n="rename">重命名</button><button id="trash" class="text-button danger" data-i18n="trash">移到废纸篓</button><details id="more"><summary data-i18n="more">更多操作</summary><div class="menu"><button id="duplicate" data-i18n="duplicate">制作副本</button><button id="zip" data-i18n="zip">压缩为 ZIP</button><button id="extract" data-i18n="extract">解压到文件夹</button><button id="copy-path" data-i18n="copyPath">复制路径</button><button id="open" data-i18n="open">用系统应用打开</button><button id="reveal" data-i18n="reveal">在系统文件管理器中显示</button></div></details></div></div>
+          <div id="list-scroll" class="list-scroll"><table><thead><tr><th class="select-cell"><input id="select-all" type="checkbox" data-label="selectAll"></th><th><button class="sort" data-sort="name" data-i18n="name">名称</button></th><th class="size-cell"><button class="sort" data-sort="size" data-i18n="size">大小</button></th><th class="date-cell"><button class="sort" data-sort="mtime" data-i18n="modified">修改时间</button></th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" role="status"></div><button id="load-more" class="button load-more" data-i18n="loadMore" hidden>加载更多</button></div>
+          <footer class="list-footer"><span id="list-count"></span><span id="connection" class="connection"></span></footer>
+        </section>
+        <aside id="preview" class="preview"><header><strong data-i18n="preview">预览</strong><button id="close-preview" class="icon-button" data-label="close"></button></header><div id="preview-content" class="preview-content"></div></aside>
+      </div>
+    </main>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><form id="dialog-form"><h2 id="dialog-title"></h2><p id="dialog-copy"></p><label id="dialog-label" for="dialog-input"></label><input id="dialog-input" autocomplete="off" maxlength="4096"><footer><button type="button" id="dialog-cancel" class="button" data-i18n="cancel">取消</button><button id="dialog-submit" class="button primary" type="submit"></button></footer></form></dialog>
+  <script type="module" src="./app.js"></script>
+</body></html>

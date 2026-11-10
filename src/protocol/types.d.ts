@@ -11,6 +11,11 @@
 export type FileKind = 'text' | 'image' | 'video' | 'audio' | 'pdf' | 'archive' | 'dir' | 'other';
 export type ProjectBadge = 'node' | 'web' | 'python' | 'rust' | 'go' | 'git';
 
+/** Cordis lifecycle exported by the package root for DSH discovery. */
+export const name: 'dsh-files';
+export const inject: string[];
+export function apply(ctx: object, config?: object): Promise<void>;
+
 export interface FileEntry {
   name: string;
   path: string;
