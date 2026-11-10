@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { registerFilesPage } from '../src/adapters/dsh-web.js';
 import { upload, toBase64 } from '../web/api.js';
 import { messages } from '../web/locale.js';
+import { makeSandbox, cleanSandbox } from './helpers.mjs';
 
 test('file page serves only bundled assets and rejects cross-origin or mutating requests', async (t) => {
   let route;
@@ -106,4 +107,19 @@ test('edits typed while a save is in flight remain an unsaved draft', async () =
   assert.equal(page.state.preview.draft, 'typed during save');
   assert.equal(page.dirty(), true);
   assert.equal(page.nodes.get('save-text').disabled, false);
+});
+
+test('page event subscriptions return structured errors for inaccessible directories', async () => {
+  const sandbox = await makeSandbox();
+  try {
+    const routes = [];
+    await sandbox.plugin.attach({ name: 'dsh', options: { hostContext: {
+      webServer: { register(route) { routes.push(route); return () => {}; } }, effect() {},
+    } } });
+    const route = routes.find(item => item.path.endsWith('/events'));
+    const response = { writeHead(status) { this.status = status; }, end(body) { this.body = body; } };
+    await route.handler({ method: 'GET', url: `/agent/files/events?path=${encodeURIComponent(sandbox.dir + '/missing')}`, headers: {} }, response);
+    assert.ok(response.status >= 400);
+    assert.equal(JSON.parse(response.body).ok, false);
+  } finally { await cleanSandbox(sandbox); }
 });

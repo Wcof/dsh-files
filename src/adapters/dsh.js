@@ -146,7 +146,7 @@ defineAdapter('dsh', (options = {}) => {
           path: route.path,
           handler: async (request, response) => {
             try {
-              if (route.path === `${prefix}/events` && request.method === 'GET') return subscribe(request, response);
+              if (route.path === `${prefix}/events` && request.method === 'GET') return await subscribe(request, response);
               const body = request.method === 'POST' ? await readRequestBody(request) : undefined;
               const url = new URL(request.url ?? route.path, 'http://127.0.0.1');
               const query = Object.fromEntries(url.searchParams.entries());
