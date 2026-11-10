@@ -50,7 +50,7 @@ POST /natives/files/agent/tools/call
    `?theme=`、签名嵌入、runtime 副本一致性全部原样。
 2. **不改启动链与生命周期**：桥接是同步注册空 handler，插件对象在首次请求时才创建；
    不启动第二个 Core、不 spawn 进程、不写产品数据。
-3. **不改数据 owner**：插件只读写自己 `stateDir` 下的导入临时文件，默认 `~/.dsh/files`；
+3. **不改数据 owner**：插件状态目录默认 `~/.dsh/files`；导入临时文件放在经授权的目标同目录，提交或取消后清理；
    与 `~/.natives` / `~/.natives-local` 完全分离。
 4. **安全失败**：桥接内部全量 try/catch，注册失败只写 stderr，不抛给宿主。
 5. **可回滚**：删除 `agent-tools.js`、还原 `index.js` 的 5 行、`package.json` 的 1 行与 README 一节即可，

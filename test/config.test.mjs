@@ -9,6 +9,13 @@ import {
   FilePluginError,
 } from '../src/index.js';
 
+test('invalid limits, boolean policies and state paths fail before startup', () => {
+  for (const input of [
+    { limits: { maxWatchers: 0 } }, { limits: { maxConcurrentTasks: Infinity } },
+    { security: { allowWrite: 'false' } }, { stateDir: 'relative' },
+  ]) assert.throws(() => resolveConfig(input, {}), FilePluginError);
+});
+
 test('defaults produce a self-contained config with no AiNative paths', () => {
   const config = resolveConfig({}, {});
   assert.equal(config.backend, 'local');

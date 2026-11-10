@@ -47,7 +47,7 @@
 |---|---|---|---|---|
 | `archive_list` | `path` | `{entries, rejected}` | 注入 | `unzip -Z1` / `tar -tf`；拒绝绝对路径与 `..` 成员并计数；可注入 `archiveHandler` |
 | `create_zip` | `paths, dest, name` | `{path, count}` | 注入 | 1..200 路径、目标已存在则拒绝；名称经 `validName` 校验 |
-| `extract_archive` | `path, dest` | `{path, count}` | 注入 | 先列表检查不安全成员，再用 `-n` / `-xk` 解包，不覆盖已有文件 |
+| `extract_archive` | `path, dest` | `{path, count}` | 注入 | 检查路径、链接/设备成员和目标现有符号链接；逐成员授权，再用 `-n` / `-xk` 解包，不覆盖已有文件；不提供解压体积配额 |
 
 ## 写入
 
@@ -55,8 +55,8 @@
 |---|---|---|---|---|
 | `create_folder` | `parent, name` | `{ok:true}` | 一致 | `validName` + 目标 WRITE 授权 |
 | `create_file` | `parent, name` | `{ok:true}` | 一致 | 独占创建（不覆盖） |
-| `write_file` | `parent, name, data, expectedMtime?` | `{path, mtime, conflict}` | 一致 | base64 → 同目录 tmp → fsync → rename 原子写；`expectedMtime` 不符返回 `conflict:true` 且不写入 |
-| `rename` | `path, name` | `{path}` | 一致 | 仅同目录改名 |
+| `write_file` | `parent, name, data, expectedMtime?` | `{path, mtime, conflict}` | 一致 | **严格** base64（非规范编码一律 `INVALID_PARAMETER`，对齐 Rust `STANDARD.decode`；Node 的 `Buffer.from(...,'base64')` 会静默吞掉非法字符，故解码后回编码比对）→ 同目录 tmp → fsync → rename 原子写；`expectedMtime` 不符返回 `conflict:true` 且不写入 |
+| `rename` | `path, name` | `{path}` | 差异 | 同目录改名；已存在目标返回 `CONFLICT`，保留双方文件 |
 | `trash` | `path` | `{ok:true}` | 注入 | 移动到回收站（macOS `~/.Trash` / XDG trash），**从不 unlink**；可注入 `trashHandler` |
 | `copy` | `from,to` 或 `source,target` | `{path}` | 一致 | 自动去重、防目录自复制、跨设备兼容；`to` 为绝对路径或 `~/...`，相对值按源所在目录解析（宽松兼容，原实现要求完整目标路径） |
 | `move` | `from,to` 或 `source,target` | `{path}` | 一致 | rename，`EXDEV` 时复制后删除；拒绝移入自身 |
@@ -84,11 +84,11 @@
 
 | 命令 | 输入 | 输出 | 状态 | 说明 |
 |---|---|---|---|---|
-| `watch_start` | `path` | `{ok:true}` | 差异 | Node `fs.watch` 非递归 + 250 ms 去噪 + 1024 事件上限；原为 `notify` crate 非递归，语义一致 |
-| `watch_stop` | `path` | `{ok:true}` | 一致 | 关闭并释放监听 |
+| `watch_start` | `path` | `{ok:true}` | 差异 | Node `fs.watch` 非递归，250 ms 合并，最多 64 个目录。单批最多保留 1024 个文件名，事件保留 `kind/path/count` 并增加 `directory/changes/overflow`。启动后核对一次有界目录名单，补回订阅启动期间漏发的创建与删除；count 包含原生信号与核对补回的变化。播种名单与窗口末 lstat 推断创建、修改、删除；重命名表现为两项变化，窗口内创建后又删除可能无记录。超限或无法判断时发目录失效通知，宿主刷新列表 |
+| `watch_stop` | `path` | `{ok:true}` | 一致 | 关闭监听、清理定时器并禁止尚未完成的批次继续发事件 |
 | `import_probe` | `parent, name` | `{exists}` | 一致 | 仅探测，不创建 |
-| `import_begin` | `uploadId, parent, name, size, conflict` | `{uploadId, path, name, size, renamed, skipped?}` | 一致 | `conflict=rename` 去重；`skip` 命中已存在目标时返回 `skipped:true` 且**不创建会话**（调用方不应继续分块）；并发会话数受 `maxConcurrentImports` 限制，超限返回 `TOO_MANY_TASKS`；临时文件位于插件 `stateDir` |
-| `import_chunk` | `uploadId, offset, data` | `{uploadId, received, size}` | 一致 | 连续 offset 校验、base64 分块、超声明大小拒绝 |
+| `import_begin` | `uploadId, parent, name, size, conflict` | `{uploadId, path, name, size, renamed, skipped?}` | 差异 | 写操作，受只读策略限制。`conflict=rename` 去重；`skip` 命中已存在目标时返回 `skipped:true` 且不创建会话。预留会话名和并发名额；临时文件为目标同目录随机私有文件，跨卷导入不依赖 stateDir 所在卷 |
+| `import_chunk` | `uploadId, offset, data` | `{uploadId, received, size}` | 一致 | 同一会话串行处理；连续 offset、严格 base64、实际写入字节数和声明大小均验证 |
 | `import_end` | `uploadId` | `{path, size, mtime}` | 一致 | 大小校验后 `hard_link` 原子提交（对齐 `ImportWriter::finish`） |
 | `import_cancel` | `uploadId` | `{uploadId, cancelled}` | 一致 | 删除临时文件、释放会话 |
 
@@ -108,3 +108,5 @@
 | 取消 / 并发 / 事件 / 只读模式 | `test/service.test.mjs` |
 | 多智能体共享同一能力实例 | `test/integration.test.mjs` |
 | 契约与文档不漂移 | `npm run check` |
+| DSH 原生执行器、HTTP/SSE、卸载与重载 | `npm run check:dsh-runtime -- <runtime-node_modules>` |
+| 文件保护边界与真实归档工具 | `test/hardening.test.mjs`、`test/system-tools.test.mjs` |

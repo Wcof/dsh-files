@@ -53,8 +53,17 @@ export interface ReadFileResult {
 
 export interface WriteResult {
   path?: string;
-  mtime: number;
+  mtime: number | null;
   conflict: boolean;
+}
+
+export interface FileChangeEvent {
+  kind: 'created' | 'modified' | 'removed';
+  path: string;
+  count: number;
+  directory: string;
+  changes: Array<{ path: string; kind: 'created' | 'modified' | 'removed' }>;
+  overflow: boolean;
 }
 
 export interface StatResult {

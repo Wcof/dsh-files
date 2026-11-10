@@ -59,7 +59,10 @@ await plugin.attach(adapter);
 ### 2.1 DeepSeek Harness · `dsh`
 
 **不再 iframe 任何 Natives 页面**，不依赖 8770 / `~/.natives` / 产品主题 / 签名嵌入。
-Host 半在 `webServer` 上注册 4 条同源路由，Client 半由宿主按 `clientSpec` 自绘 UI。
+安装组合包时，`@dsh/files/dsh` 的 `apply(ctx, config)` 向 `ctx.tools` 注册 25 个原生工具。
+每个定义包含 `parameters`、`output.schema/render` 和 `execute`，调用复用共享服务并传递取消信号。
+`tools` 是必需注入；`webServer` 可选，存在时再注册 5 条同源路由。卸载时释放工具、路由、事件流及内核资源。
+不声明浏览器 Client 入口；`clientSpec` 仅供已有宿主面板参考，不会自动创建 UI。
 
 ```js
 const handle = await plugin.attach({
@@ -80,6 +83,11 @@ const handle = await plugin.attach({
 | `/agent/files/describe` | GET | — | 边界 / 策略 / 能力 / 限制 |
 | `/agent/files/rpc` | POST | `{id, method, params}` | 原 wire 响应 |
 | `/agent/files/tools/call` | POST | `{name:'file_list_dir', arguments:{...}}` | `{ok, result}` |
+| `/agent/files/events` | GET | 同源 EventSource 请求 | SSE：`changed`、`fs_changed`、`progress`、`error` |
+
+事件流最多 32 个连接，15 秒发送心跳；慢消费者超过写缓冲后关闭连接，由宿主重连并刷新目录。
+`fs_changed` 保留 `kind/path/count`，新增 `directory/changes/overflow`；界面应遍历 `changes`，
+`overflow:true` 时重新读取目录。事件不持久化，也不代表完整的文件修改历史。
 
 - 复用 DSH 原生 `webServer.register({kind:'exact', path, handler})` 与 `ctx.effect(fn, key)` 形状
   （与 `integrations/dsh/runtime/index.js` 一致），无新依赖。
@@ -95,7 +103,7 @@ NDJSON over stdio（一行一个 JSON），响应沿用原 wire envelope `{id, o
 
 ```jsonc
 {"id":"1","method":"initialize","params":{"client":"zcode"}}
-{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.1.0","backend":"local","tools":25}}
+{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.1.1","backend":"local","tools":25}}
 
 {"id":"2","method":"tools/list"}
 {"id":"2","ok":true,"result":{"tools":[...]}}
@@ -110,7 +118,8 @@ NDJSON over stdio（一行一个 JSON），响应沿用原 wire envelope `{id, o
 ```
 
 支持 `tools/list` 与 `tools.list`、`tools/call` 与 `tools.call` 两种拼写。
-`options: { input, output, prefix }` 可注入任意流（默认 `process.stdin/stdout`）。
+`options: { input, output }` 可注入任意流（默认 `process.stdin/stdout`）。
+工具目录前缀统一由 `createFilePlugin({ toolOptions: { prefix } })` 定义，所有 `tools/call` 均按实际目录解析。
 示例里的 `tools: 25` 是当前目录的示意值，实际以 `tools/list` 返回为准。
 
 **请求 id**：字符串与数字都接受，响应按宿主原始类型回显（`{"id":2,...}` 回 `"id":2`，
@@ -235,4 +244,4 @@ defineAdapter('my-agent', (options = {}) => {
 | 交付内容 | iframe URL 与面板壳 | 完整文件能力 + 统一工具目录 + 契约 |
 | 新增宿主 | 重写插件 | 一个 `defineAdapter()` 文件 |
 | 独立运行 | 不行（无 Core 即不可用） | 可以（默认 local backend） |
-| 数据 | 共享产品数据库 | 插件自有 `stateDir`，仅存导入临时文件 |
+| 数据 | 共享产品数据库 | 独立插件状态目录；导入暂存与目标同目录，支持跨卷导入 |

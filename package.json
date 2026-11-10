@@ -1,11 +1,17 @@
 {
   "name": "@dsh/files",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Host-agnostic file capability plugin with one unified adapter contract for DeepSeek Harness, zcode and similar agents.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wcof/dsh-files.git"
+  },
+  "homepage": "https://github.com/Wcof/dsh-files#readme",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=20.11.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
   },
   "main": "./src/index.js",
   "types": "./src/protocol/types.d.ts",
@@ -15,6 +21,7 @@
       "default": "./src/index.js"
     },
     "./config": "./src/config.js",
+    "./dsh": "./src/dsh-plugin.js",
     "./protocol": "./src/protocol/commands.js",
     "./adapters": "./src/adapters/index.js",
     "./package.json": "./package.json"
@@ -26,16 +33,21 @@
     "src/",
     "bin/",
     "docs/",
+    "cordis.patch.yml",
     "README.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "npm test && node scripts/check-contract.mjs",
+    "check:dsh-runtime": "node scripts/check-dsh-runtime.mjs",
     "tools": "node bin/cli.mjs list-tools",
     "describe": "node bin/cli.mjs describe",
     "stdio": "node bin/cli.mjs stdio",
     "mcp": "node bin/cli.mjs mcp",
     "http": "node bin/cli.mjs http"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
   },
   "dependencies": {}
 }

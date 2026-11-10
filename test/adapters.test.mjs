@@ -124,7 +124,7 @@ test('DSH adapter registers only agent routes and never an AiNative iframe', asy
       name: 'dsh',
       options: { hostContext, panelId: 'test-files' },
     });
-    assert.equal(routes.size, 4);
+    assert.equal(routes.size, 5);
     assert.ok([...routes.keys()].every((path) => path.startsWith('/agent/files')));
     assert.equal(handle.clientSpec.panelId, 'test-files');
     assert.equal(handle.clientSpec.rendering, 'host-owned');

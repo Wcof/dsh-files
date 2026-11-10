@@ -285,7 +285,7 @@ export const COMMANDS = Object.freeze([
     schema: { parent: PARENT, name: NAME }, output: '{ exists }',
   },
   {
-    name: 'import_begin', group: 'import', mutates: false, capability: 'core', tool: false,
+    name: 'import_begin', group: 'import', mutates: true, capability: 'core', tool: false,
     summary: 'Begin a chunked import; conflict policy is rename (default) or skip.',
     params: ['uploadId', 'parent', 'name', 'size', 'conflict'],
     required: ['uploadId', 'parent', 'name', 'size'],

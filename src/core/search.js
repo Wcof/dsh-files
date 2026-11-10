@@ -34,13 +34,13 @@ async function contentMatches(full, kind, query, config, systemTools) {
   if (!info || !info.isFile()) return null;
   const lower = query.toLowerCase();
   if (kind === 'text' && info.size <= config.limits.maxFullRead) {
-    const text = await fsp.readFile(full, 'utf8').catch(() => '');
+    const text = await fsp.readFile(full, 'utf8');
     const lines = text.split('\n');
     const matched = lines.filter((line) => line.toLowerCase().includes(lower)).slice(0, 20);
     return { matchCount: matched.length, matchLines: matched };
   }
   if (kind === 'pdf' && info.size <= 20 * 1024 * 1024 && systemTools?.pdfText) {
-    const text = await systemTools.pdfText(full).catch(() => '');
+    const text = await systemTools.pdfText(full);
     const hits = text.split('\n').filter((line) => line.toLowerCase().includes(lower));
     return { matchCount: hits.length, matchLines: hits.slice(0, 20) };
   }
@@ -77,7 +77,7 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
   // Optional host-provided accelerator (e.g. macOS mdfind). It is pure
   // optimisation: missing, disabled or failing hooks fall back to the built-in
   // bounded traversal below, and every returned path still passes the policy.
-  if (locate && !params.path && typeof systemTools?.locate === 'function') {
+  if (locate && !params.path && !wantContent && params.recursive !== false && typeof systemTools?.locate === 'function') {
     let candidates = null;
     try {
       candidates = await systemTools.locate(query);
@@ -86,12 +86,14 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
     }
     if (Array.isArray(candidates) && candidates.length > 0) {
       for (const raw of candidates) {
+        if (ctx.signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
         if (found.length >= maxResults) {
           truncated = true;
           break;
         }
         try {
           const full = policy.authorize(raw, Operation.READ).path;
+          if (!showHidden && full.split(path.sep).some((part) => part.startsWith('.'))) continue;
           const meta = await fsp.lstat(full);
           const isDir = meta.isDirectory() && !meta.isSymbolicLink();
           found.push({
@@ -138,7 +140,8 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
       continue;
     }
     for (const dirent of dirents) {
-      if (found.length >= maxResults) {
+      if (ctx.signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
+      if (found.length >= maxResults || visited >= maxResults * 4 || Date.now() - started > maxDuration) {
         truncated = true;
         break;
       }
@@ -147,6 +150,7 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
       const full = path.join(dir, dirent.name);
       let meta;
       try {
+        policy.authorize(full, Operation.READ);
         meta = await fsp.lstat(full);
       } catch {
         continue;

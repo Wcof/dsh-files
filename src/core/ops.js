@@ -19,6 +19,23 @@ function rejectName(policy, name) {
   }
 }
 
+/**
+ * Node's Buffer silently drops characters that are not valid base64, so a
+ * corrupted payload would be written to disk as truncated garbage and reported
+ * as a success. The original host used the Rust STANDARD engine, which rejects
+ * non-canonical input; re-encoding is the cheapest equivalent check.
+ */
+export function decodeBase64Strict(value, label = 'data') {
+  if (typeof value !== 'string' || value.length % 4 !== 0) {
+    throw new FilePluginError(ErrorCode.INVALID_PARAMETER, `invalid base64 ${label}`);
+  }
+  const buffer = Buffer.from(value, 'base64');
+  if (buffer.toString('base64') !== value) {
+    throw new FilePluginError(ErrorCode.INVALID_PARAMETER, `invalid base64 ${label}`);
+  }
+  return buffer;
+}
+
 export function resolveTarget(policy, parent, name, operation = Operation.WRITE) {
   rejectName(policy, name);
   const parentHandle = policy.authorize(parent, operation);
@@ -41,37 +58,40 @@ export async function deduplicatePath(target) {
 /** tmp -> fsync -> rename, with optimistic concurrency via expectedMtime. */
 export async function writeFileAtomic(policy, params, config) {
   const target = resolveTarget(policy, params.parent, params.name);
-  let data;
-  try {
-    data = Buffer.from(params.data, 'base64');
-  } catch {
-    throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'invalid base64 data');
-  }
+  const data = decodeBase64Strict(params.data);
   if (data.length > config.limits.maxStringParam) {
     throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'payload is too large');
   }
-  if (params.expectedMtime !== undefined) {
-    const current = await fsp.stat(target).catch(() => null);
-    if (current && Math.abs(current.mtimeMs - params.expectedMtime) > 1) {
-      return { path: target, mtime: current.mtimeMs, conflict: true };
-    }
+  const current = await fsp.stat(target).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (params.expectedMtime !== undefined && (!current || Math.abs(current.mtimeMs - params.expectedMtime) > 1)) {
+    return { path: target, mtime: current?.mtimeMs ?? null, conflict: true };
   }
   const temporary = path.join(
     path.dirname(target),
     `.dsh-files-write-${process.pid}-${Math.random().toString(36).slice(2)}`
   );
-  const fd = await fsp.open(temporary, 'wx', 0o600);
   try {
-    await fd.writeFile(data);
-    await fd.sync();
-  } finally {
-    await fd.close();
-  }
-  try {
+    const fd = await fsp.open(temporary, 'wx', 0o600);
+    try {
+      await fd.writeFile(data);
+      if (current) await fd.chmod(current.mode & 0o777);
+      await fd.sync();
+    } finally { await fd.close(); }
+    if (params.expectedMtime !== undefined) {
+      const latest = await fsp.stat(target).catch((error) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!latest || latest.ino !== current.ino || latest.mtimeMs !== current.mtimeMs) {
+        return { path: target, mtime: latest?.mtimeMs ?? null, conflict: true };
+      }
+    }
     await fsp.rename(temporary, target);
-  } catch (error) {
+  } finally {
     await fsp.unlink(temporary).catch(() => {});
-    throw error;
   }
   const info = await fsp.stat(target);
   return { path: target, mtime: info.mtimeMs, conflict: false };
@@ -89,11 +109,18 @@ export async function renameEntry(policy, rawPath, name) {
   const source = policy.authorize(rawPath, Operation.WRITE).path;
   const target = policy.authorize(path.join(path.dirname(source), name), Operation.WRITE).path;
   if (source === target) return { path: source };
+  const existing = await fsp.lstat(target).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (existing) throw new FilePluginError(ErrorCode.CONFLICT, 'target already exists');
   await fsp.rename(source, target);
   return { path: target };
 }
 
-export async function copyRecursive(source, destination, signal) {
+export async function copyRecursive(source, destination, signal, policy) {
+  policy?.authorize(source, Operation.READ);
+  policy?.authorize(destination, Operation.WRITE);
   const info = await fsp.lstat(source);
   if (signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
   if (info.isSymbolicLink()) {
@@ -111,7 +138,7 @@ export async function copyRecursive(source, destination, signal) {
   await fsp.mkdir(destination, { recursive: false });
   const children = await fsp.readdir(source, { withFileTypes: true });
   for (const child of children) {
-    await copyRecursive(path.join(source, child.name), path.join(destination, child.name), signal);
+    await copyRecursive(path.join(source, child.name), path.join(destination, child.name), signal, policy);
   }
 }
 
@@ -127,7 +154,7 @@ export async function copyEntry(policy, from, to, { dedupe = true, signal } = {}
     target = policy.authorize(path.join(target, path.basename(source)), Operation.WRITE).path;
   }
   if (dedupe) target = await deduplicatePath(target);
-  await copyRecursive(source, target, signal);
+  await copyRecursive(source, target, signal, policy);
   return { path: target };
 }
 
@@ -146,7 +173,7 @@ export async function moveEntry(policy, from, to, { signal } = {}) {
     await fsp.rename(source, target);
   } catch (error) {
     if (error?.code !== 'EXDEV') throw error;
-    await copyRecursive(source, target, signal);
+    await copyRecursive(source, target, signal, policy);
     await removeRecursive(source);
   }
   return { path: target };
@@ -155,7 +182,7 @@ export async function moveEntry(policy, from, to, { signal } = {}) {
 export async function duplicateEntry(policy, rawPath, { signal } = {}) {
   const source = policy.authorize(rawPath, Operation.WRITE).path;
   const target = await deduplicatePath(source);
-  await copyRecursive(source, target, signal);
+  await copyRecursive(source, target, signal, policy);
   return { path: target };
 }
 
@@ -209,7 +236,7 @@ export async function runBatch(policy, params, config, ctx, kind, systemTools) {
 }
 
 /**
- * Chunked import sessions. Temp files live under the plugin state dir, are
+ * Chunked import sessions. Temp files live beside their destination, are
  * written at contiguous offsets, and are atomically committed with hard_link
  * (same behaviour as `ImportWriter::finish`).
  */
@@ -218,6 +245,9 @@ export class ImportManager {
     this.config = config;
     this.policy = policy;
     this.sessions = new Map();
+    this.pending = new Map();
+    this.reserved = new Set();
+    this.disposed = false;
     this.dir = path.join(config.stateDir, 'imports');
   }
 
@@ -231,59 +261,79 @@ export class ImportManager {
   }
 
   async begin(params) {
+    if (this.disposed) throw new FilePluginError(ErrorCode.BACKEND_UNAVAILABLE, 'imports are disposed');
     const uploadId = params.uploadId || `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    if (this.sessions.has(uploadId)) {
+    if (this.sessions.has(uploadId) || this.reserved.has(uploadId)) {
       throw new FilePluginError(ErrorCode.CONFLICT, 'uploadId already in use');
     }
-    if (this.sessions.size >= this.config.limits.maxConcurrentImports) {
+    if (this.sessions.size + this.reserved.size >= this.config.limits.maxConcurrentImports) {
       throw new FilePluginError(ErrorCode.TOO_MANY_TASKS, 'too many concurrent imports');
     }
     if (params.size > this.config.limits.maxImportBytes) {
       throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'import is too large');
     }
-    let target = resolveTarget(this.policy, params.parent, params.name);
-    const exists = fs.existsSync(target);
-    let renamed = false;
-    if (exists && params.conflict === 'skip') {
-      return { uploadId, path: target, name: path.basename(target), size: params.size, renamed, skipped: true };
-    }
-    if (exists) {
-      target = await deduplicatePath(target);
-      renamed = true;
-    }
-    const temporary = path.join(this.dir, `.dsh-files-import-${uploadId}`);
-    await fsp.writeFile(temporary, '', { flag: 'wx' });
-    this.sessions.set(uploadId, {
-      uploadId, target, temporary, size: params.size, received: 0, fd: null,
-    });
-    return {
-      uploadId,
-      path: target,
-      name: path.basename(target),
-      size: params.size,
-      renamed,
-    };
+    this.reserved.add(uploadId);
+    try {
+      let target = resolveTarget(this.policy, params.parent, params.name);
+      const exists = fs.existsSync(target);
+      let renamed = false;
+      if (exists && params.conflict === 'skip') {
+        return { uploadId, path: target, name: path.basename(target), size: params.size, renamed, skipped: true };
+      }
+      if (exists) {
+        target = await deduplicatePath(target);
+        renamed = true;
+      }
+      // Same-directory staging also supports imports onto external volumes.
+      const temporary = path.join(path.dirname(target), `.dsh-files-import-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      await fsp.writeFile(temporary, '', { flag: 'wx', mode: 0o600 });
+      if (this.disposed) {
+        await fsp.unlink(temporary);
+        throw new FilePluginError(ErrorCode.BACKEND_UNAVAILABLE, 'imports are disposed');
+      }
+      this.sessions.set(uploadId, {
+        uploadId, target, temporary, size: params.size, received: 0, fd: null,
+      });
+      return { uploadId, path: target, name: path.basename(target), size: params.size, renamed };
+    } finally { this.reserved.delete(uploadId); }
   }
 
-  async chunk(params) {
+  serialize(uploadId, operation) {
+    if (this.disposed) return Promise.reject(new FilePluginError(ErrorCode.BACKEND_UNAVAILABLE, 'imports are disposed'));
+    const previous = this.pending.get(uploadId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(operation);
+    this.pending.set(uploadId, next);
+    return next.finally(() => { if (this.pending.get(uploadId) === next) this.pending.delete(uploadId); });
+  }
+
+  chunk(params) { return this.serialize(params.uploadId, () => this.writeChunk(params)); }
+
+  async writeChunk(params) {
     const session = this.sessions.get(params.uploadId);
     if (!session) throw new FilePluginError(ErrorCode.NOT_FOUND, 'unknown uploadId');
     const offset = params.offset ?? session.received;
     if (offset !== session.received) {
       throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'non-contiguous chunk offset');
     }
-    const buffer = Buffer.from(params.data, 'base64');
+    const buffer = decodeBase64Strict(params.data, 'chunk');
     if (session.received + buffer.length > session.size) {
       throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'import exceeds declared size');
     }
     const fd = session.fd ?? (await fsp.open(session.temporary, 'r+'));
     session.fd = fd;
-    await fd.write(buffer, 0, buffer.length, offset);
-    session.received += buffer.length;
+    let written = 0;
+    while (written < buffer.length) {
+      const { bytesWritten } = await fd.write(buffer, written, buffer.length - written, offset + written);
+      if (!bytesWritten) throw new FilePluginError(ErrorCode.INTERNAL, 'import write made no progress');
+      written += bytesWritten;
+      session.received += bytesWritten;
+    }
     return { uploadId: params.uploadId, received: session.received, size: session.size };
   }
 
-  async end(params) {
+  end(params) { return this.serialize(params.uploadId, () => this.finish(params)); }
+
+  async finish(params) {
     const session = this.sessions.get(params.uploadId);
     if (!session) throw new FilePluginError(ErrorCode.NOT_FOUND, 'unknown uploadId');
     if (session.fd) {
@@ -294,7 +344,8 @@ export class ImportManager {
     if (session.received !== session.size) {
       throw new FilePluginError(ErrorCode.CONFLICT, 'import is incomplete');
     }
-    let target = session.target;
+    // Recheck authorization after all chunks: the target's ancestors may have changed.
+    let target = this.policy.authorize(session.target, Operation.WRITE).path;
     if (fs.existsSync(target)) target = await deduplicatePath(target);
     try {
       await fsp.link(session.temporary, target);
@@ -309,7 +360,9 @@ export class ImportManager {
     return { path: target, size: info.size, mtime: info.mtimeMs };
   }
 
-  async cancel(params) {
+  cancel(params) { return this.serialize(params.uploadId, () => this.discard(params)); }
+
+  async discard(params) {
     const session = this.sessions.get(params.uploadId);
     if (!session) return { uploadId: params.uploadId, cancelled: false };
     if (session.fd) await session.fd.close().catch(() => {});
@@ -319,6 +372,8 @@ export class ImportManager {
   }
 
   async dispose() {
-    for (const uploadId of [...this.sessions.keys()]) await this.cancel({ uploadId });
+    this.disposed = true;
+    await Promise.allSettled([...this.pending.values()]);
+    for (const uploadId of [...this.sessions.keys()]) await this.discard({ uploadId });
   }
 }

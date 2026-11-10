@@ -17,6 +17,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (pkg.dsh?.bundle?.patch !== './cordis.patch.yml') problems.push('missing DSH bundle declaration');
+if (pkg.exports?.['./dsh'] !== './src/dsh-plugin.js') problems.push('missing DSH Cordis entry');
+if (!pkg.files?.includes('cordis.patch.yml')) problems.push('DSH patch is not included in package files');
+const patch = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8');
+if (!patch.includes("name: '@dsh/files/dsh'")) problems.push('DSH patch does not reference the Cordis entry');
 if (pkg.version !== PLUGIN_VERSION) {
   problems.push(`package.json version ${pkg.version} != config PLUGIN_VERSION ${PLUGIN_VERSION}`);
 }

@@ -14,8 +14,8 @@ export function buildToolDefinitions({ prefix = 'file', include, exclude } = {})
   const includeSet = include ? new Set(include) : null;
   const excludeSet = new Set(exclude ?? []);
   return COMMANDS.filter((command) => {
-    if (includeSet) return includeSet.has(command.name);
     if (excludeSet.has(command.name)) return false;
+    if (includeSet) return includeSet.has(command.name);
     return command.tool === true;
   }).map((command) => {
     const inputSchema = {
@@ -52,8 +52,9 @@ export function toolNameToMethod(toolName, { prefix = 'file' } = {}) {
 
 /** Shared implementation of MCP `tools/call` / zcode `tools.call`. */
 export async function callTool(service, toolName, args = {}, options = {}) {
-  const method = toolNameToMethod(toolName, options);
-  return service.call(method, args ?? {}, options);
+  const tool = service.tools().find((entry) => entry.name === toolName);
+  if (!tool) throw new FilePluginError(ErrorCode.UNSUPPORTED_METHOD, `unknown tool: ${toolName}`);
+  return service.call(tool.method, args, options);
 }
 
 /** Flatten the catalogue into the manifest shape DSH hosts expect. */

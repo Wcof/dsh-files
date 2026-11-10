@@ -17,6 +17,32 @@ npm test          # 全量单测 + 集成测试（含原项目桥接验证）
 npm run check     # 测试 + 契约一致性门禁
 ```
 
+### 安装到 DeepSeek Harness
+
+包内自带 `dsh.bundle`、`cordis.patch.yml` 和 `@dsh/files/dsh` Cordis 入口。
+声明 DSH 范围为 `>=0.2.2-rc.1 <0.3.0`。安装并启用后可直接调用 25 个 `file_*` 工具，使用宿主原生工具结果展示。
+在 DSH 侧栏打开「插件 → 添加插件」，粘贴以下 GitHub 地址，查看并安装：
+
+```text
+https://github.com/Wcof/dsh-files.git
+```
+
+在 [PlugBox](https://github.com/Wcof/PlugBox) 的「安装插件」对话框中也可使用同一地址。
+
+也可以先完全退出桌面版，再使用已安装的 DSH CLI：
+
+```bash
+dsh plugin --profile desktop add git+https://github.com/Wcof/dsh-files.git
+```
+
+重新打开桌面版后，在对话中要求列目录、读取或搜索文件即可；例如“使用 file_list_dir 列出我的 Downloads”。
+Web / headless 使用各自的 profile 名称。这里的安装命令会修改所选 profile；项目检查本身不修改 profile。
+开发时可将安装地址换成本地仓库的绝对路径。插件直接运行包内 JavaScript，无需安装时构建。
+根导出仍为通用 JS API，DSH 入口不会改变其他宿主接入方式。
+
+需要只读模式时，在该 profile 的 patch 中为 `@dsh/files:tools` 配置
+`security: { allowWrite: false }`；支持的完整配置见 `docs/PLUGIN_CONTRACT.md`。
+
 ```js
 import { createFilePlugin } from '@dsh/files';
 
@@ -78,7 +104,8 @@ dsh-files http                               # loopback HTTP
 ## 各智能体接入（同一份插件）
 
 ```js
-// DeepSeek Harness：Host 半注册 4 条同源路由，宿主自绘 UI（不再 iframe 产品页）
+// 已有 DSH 宿主只需同源 API 时：注册 5 条路由（含 SSE），UI 由宿主提供。
+// 安装组合包时，@dsh/files/dsh 另外向 ctx.tools 注册原生工具。
 const dsh = await plugin.attach({ name: 'dsh', options: { hostContext: ctx } });
 
 // zcode：CLI agent 拉起子进程，NDJSON 交互
@@ -101,6 +128,7 @@ await plugin.attach(['dsh', 'zcode', 'mcp', 'http']);
 | [CAPABILITY_MATRIX.md](docs/CAPABILITY_MATRIX.md) | 43 个原命令逐条行为对照与差异清单 |
 | [AGENT_ADAPTERS.md](docs/AGENT_ADAPTERS.md) | 统一适配协议、内置适配器、如何接入新智能体 |
 | [NATIVES_INTEGRATION.md](docs/NATIVES_INTEGRATION.md) | 原项目最小接入调整与回归结论 |
+| [DSH_VERIFICATION.md](docs/DSH_VERIFICATION.md) | DSH 运行时验证方法、功能参考与适用边界 |
 
 ## 与 AiNative 的关系
 

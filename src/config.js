@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FilePluginError, ErrorCode } from './protocol/errors.js';
 
-export const PLUGIN_VERSION = '0.1.0';
+export const PLUGIN_VERSION = '0.1.1';
 export const PROTOCOL_VERSION = 1;
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -30,6 +30,7 @@ export const DEFAULT_LIMITS = Object.freeze({
   maxConcurrentTasks: 8,
   maxConcurrentImports: 4,
   maxWatchEvents: 1024,
+  maxWatchers: 64,
   watchDebounceMs: 250,
   defaultListLimit: 500,
   defaultPageWindow: 100_001,
@@ -130,6 +131,15 @@ export function validateConfig(config) {
   }
   if (typeof config.homeDir !== 'string' || !path.isAbsolute(config.homeDir)) {
     throw new FilePluginError(ErrorCode.INVALID_REQUEST, 'homeDir must be an absolute path');
+  }
+  for (const key of ['stateDir', 'tempDir']) {
+    if (typeof config[key] !== 'string' || !path.isAbsolute(config[key])) throw new FilePluginError(ErrorCode.INVALID_REQUEST, `${key} must be an absolute path`);
+  }
+  for (const [key, value] of Object.entries(config.limits)) {
+    if (!(key in DEFAULT_LIMITS) || !Number.isSafeInteger(value) || value <= 0) throw new FilePluginError(ErrorCode.INVALID_REQUEST, `invalid limit: ${key}`);
+  }
+  for (const [key, value] of Object.entries(config.security)) {
+    if (!(key in DEFAULTS.security) || typeof value !== 'boolean') throw new FilePluginError(ErrorCode.INVALID_REQUEST, `invalid security option: ${key}`);
   }
   if (!['local', 'natives-core'].includes(config.backend) && typeof config.backend !== 'object') {
     throw new FilePluginError(ErrorCode.INVALID_REQUEST, 'unknown backend');

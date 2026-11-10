@@ -259,6 +259,63 @@ test('injected locate accelerator is used, sandboxed and falls back when broken'
   }
 });
 
+test('write_file and import_chunk reject non-canonical base64', async () => {
+  const sandbox = await makeSandbox();
+  try {
+    const { plugin, dir } = sandbox;
+    // Node's Buffer silently drops invalid characters; the original host used
+    // the Rust STANDARD engine, which rejects all of these.
+    for (const bad of ['!!!not base64!!!', 'abc', 'a=', 'AA=AA=', 'ab**', 'QQ==QQ==']) {
+      await assert.rejects(
+        () => plugin.call('write_file', { parent: dir, name: 'x.txt', data: bad }),
+        (error) => error.code === ErrorCode.INVALID_PARAMETER,
+        `expected rejection for ${JSON.stringify(bad)}`
+      );
+    }
+    assert.equal(await fsp.stat(path.join(dir, 'x.txt')).then(() => true, () => false), false);
+    for (const good of ['', b64('hello'), b64('a'), b64('ab'), b64('abc')]) {
+      await plugin.call('write_file', { parent: dir, name: 'x.txt', data: good });
+    }
+    const written = await plugin.call('read_file', { path: path.join(dir, 'x.txt') });
+    assert.equal(written.content, 'abc');
+
+    await plugin.call('import_begin', { uploadId: 'u1', parent: dir, name: 'u.txt', size: 4 });
+    await assert.rejects(
+      () => plugin.call('import_chunk', { uploadId: 'u1', offset: 0, data: '%%%' }),
+      (error) => error.code === ErrorCode.INVALID_PARAMETER
+    );
+    await plugin.call('import_cancel', { uploadId: 'u1' });
+  } finally {
+    await cleanSandbox(sandbox);
+  }
+});
+
+test('the task budget gates heavy calls only, never plain writes', async () => {
+  const sandbox = await makeSandbox({ config: { limits: { maxConcurrentTasks: 1 } } });
+  try {
+    const { plugin, dir } = sandbox;
+    // native-file-host only admits search/locate/read_file/archive/*_batch
+    // (main.rs:328-340); write_file, list_dir and stat were never queued.
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        plugin.call('write_file', { parent: dir, name: `p-${index}.txt`, data: b64(`v${index}`) })
+      )
+    );
+    assert.equal(results.length, 12);
+    assert.equal(results.every((item) => item.conflict === false), true);
+    const listed = await Promise.all(
+      Array.from({ length: 12 }, () => plugin.call('list_dir', { path: dir, limit: 5 }))
+    );
+    assert.equal(listed.length, 12);
+    await plugin.call('stat', { path: dir });
+    // No temp files may survive a completed atomic write.
+    const strays = (await fsp.readdir(dir)).filter((name) => name.startsWith('.dsh-files-write-'));
+    assert.deepEqual(strays, []);
+  } finally {
+    await cleanSandbox(sandbox);
+  }
+});
+
 test('maxConcurrentImports bounds in-flight import sessions', async () => {
   const sandbox = await makeSandbox({ config: { limits: { maxConcurrentImports: 1 } } });
   try {

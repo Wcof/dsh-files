@@ -21,7 +21,7 @@
 
 import { defineAdapter, readLineStream } from './adapter.js';
 import { asFilePluginError, safeMessage } from '../protocol/errors.js';
-import { callTool, toolNameToMethod } from '../tool-definitions.js';
+import { callTool } from '../tool-definitions.js';
 
 defineAdapter('zcode', (options = {}) => {
   let service;
@@ -62,8 +62,7 @@ defineAdapter('zcode', (options = {}) => {
       } else if (method === 'cancel') {
         write({ id: replyId, ok: true, result: service.cancel(params.requestId ?? wireId) });
       } else if (typeof method === 'string' && method.startsWith(`${prefix}_`)) {
-        const command = toolNameToMethod(method, { prefix });
-        write({ id: replyId, ok: true, result: await service.call(command, params, { requestId: wireId }) });
+        write({ id: replyId, ok: true, result: await callTool(service, method, params, { requestId: wireId }) });
       } else {
         const { ok, result, error } = await service.handle({ id: wireId, method, params });
         write({ id: replyId, ok, ...(ok ? { result } : { error }) });

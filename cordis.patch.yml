@@ -1,0 +1,3 @@
+- insert:
+    - id: '@dsh/files:tools'
+      name: '@dsh/files/dsh'

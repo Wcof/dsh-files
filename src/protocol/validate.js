@@ -37,7 +37,7 @@ export function validateRequest(request, config) {
     throw new FilePluginError(ErrorCode.INVALID_REQUEST, 'request must be an object');
   }
   const { id, method } = request;
-  const params = request.params ?? {};
+  const params = request.params === undefined ? {} : request.params;
 
   if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > MAX_ID_BYTES) {
     throw new FilePluginError(ErrorCode.INVALID_REQUEST, 'invalid request id');
@@ -58,6 +58,14 @@ export function validateRequest(request, config) {
     if (!allowed.includes(key)) {
       throw new FilePluginError(ErrorCode.UNKNOWN_PARAMETER, `unknown parameter: ${key}`);
     }
+  }
+
+  const command = COMMAND_BY_NAME.get(method);
+  for (const key of command.required ?? []) {
+    if (!Object.hasOwn(params, key)) invalid(`missing required parameter: ${key}`);
+  }
+  if (command.anyOf && !command.anyOf.some((choice) => choice.required.every((key) => Object.hasOwn(params, key)))) {
+    invalid('source and destination are required');
   }
 
   for (const key of STRING_PARAM_KEYS) {
@@ -102,7 +110,8 @@ export function validateRequest(request, config) {
   }
   if ('paths' in params) validatePaths(params.paths, limits, method === 'create_zip');
 
-  return { id, method, params, command: COMMAND_BY_NAME.get(method) };
+  if ('uploadId' in params && !/^[a-zA-Z0-9_-]{1,128}$/.test(params.uploadId)) invalid('invalid uploadId');
+  return { id, method, params, command };
 }
 
 function validatePaths(paths, limits, isCreateZip) {

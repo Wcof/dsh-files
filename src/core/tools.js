@@ -16,6 +16,10 @@ import { FilePluginError, ErrorCode } from '../protocol/errors.js';
 export function defaultCommandRunner(command, args = [], options = {}) {
   const { timeoutMs = 30_000, cwd, maxBuffer = 8 * 1024 * 1024 } = options;
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled'));
+      return;
+    }
     const hasStdin = typeof options.stdin === 'string' || Buffer.isBuffer(options.stdin);
     let child;
     try {
@@ -24,21 +28,33 @@ export function defaultCommandRunner(command, args = [], options = {}) {
       reject(new FilePluginError(ErrorCode.CAPABILITY_UNAVAILABLE, `cannot start ${command}`, { cause: error }));
       return;
     }
-    if (hasStdin) child.stdin.end(options.stdin);
+    if (hasStdin) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(options.stdin);
+    }
     const chunks = [];
     const errors = [];
     let size = 0;
     let settled = false;
+    let failure;
+    const abort = () => {
+      failure = new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
+      child.kill('SIGKILL');
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
       if (settled) return;
-      settled = true;
+      failure = new FilePluginError(ErrorCode.TIMEOUT, `${command} timed out`);
       child.kill('SIGKILL');
-      reject(new FilePluginError(ErrorCode.TIMEOUT, `${command} timed out`));
     }, timeoutMs);
 
     child.stdout.on('data', (chunk) => {
       size += chunk.length;
       if (size <= maxBuffer) chunks.push(chunk);
+      else {
+        failure = new FilePluginError(ErrorCode.CAPABILITY_UNAVAILABLE, 'command output exceeds the configured limit');
+        child.kill('SIGKILL');
+      }
     });
     child.stderr.on('data', (chunk) => {
       if (errors.length < 64) errors.push(chunk);
@@ -47,12 +63,16 @@ export function defaultCommandRunner(command, args = [], options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
+      if (failure) { reject(failure); return; }
       reject(new FilePluginError(ErrorCode.CAPABILITY_UNAVAILABLE, `cannot start ${command}`, { cause: error }));
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
+      if (failure) { reject(failure); return; }
       resolve({
         code,
         stdout: Buffer.concat(chunks).toString('utf8'),
@@ -170,14 +190,14 @@ export function createSystemTools(config) {
       return results;
     },
 
-    async archiveList(archivePath) {
+    async archiveList(archivePath, signal) {
       if (injected.archiveHandler) return injected.archiveHandler({ op: 'list', path: archivePath });
       guard('archiveHandler');
       const ext = path.extname(archivePath).toLowerCase();
       const isZip = ['.zip', '.jar'].includes(ext);
       const result = isZip
-        ? await run('unzip', ['-Z1', archivePath], { timeoutMs })
-        : await run('tar', ['-tf', archivePath], { timeoutMs });
+        ? await run('unzip', ['-Z1', archivePath], { timeoutMs, signal })
+        : await run('tar', ['-tf', archivePath], { timeoutMs, signal });
       if (result.code !== 0) {
         throw new FilePluginError(ErrorCode.INTERNAL, 'archive listing failed');
       }
@@ -196,28 +216,50 @@ export function createSystemTools(config) {
       return { entries: entries.filter((entry) => !entry.unsafe), rejected: entries.filter((entry) => entry.unsafe).length };
     },
 
-    async createZip(paths, destinationDir, name) {
+    async createZip(paths, destinationDir, name, signal) {
       if (injected.archiveHandler) return injected.archiveHandler({ op: 'create', paths, dest: destinationDir, name });
       guard('archiveHandler');
       const target = path.join(destinationDir, name.endsWith('.zip') ? name : `${name}.zip`);
       if (fs.existsSync(target)) throw new FilePluginError(ErrorCode.CONFLICT, 'archive already exists');
-      const result = await run('zip', ['-r', '-q', target, ...paths], { timeoutMs });
+      let cwd = path.dirname(paths[0]);
+      while (!paths.every((source) => source.startsWith(cwd + path.sep) || cwd === path.parse(cwd).root)) cwd = path.dirname(cwd);
+      const result = await run('zip', ['-r', '-q', target, '--', ...paths.map((source) => path.relative(cwd, source))], { timeoutMs, cwd, signal });
       if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'zip creation failed');
       return { path: target, count: paths.length };
     },
 
-    async extractArchive(archivePath, destinationDir) {
+    async extractArchive(archivePath, destinationDir, authorizeMember, signal) {
       if (injected.archiveHandler) return injected.archiveHandler({ op: 'extract', path: archivePath, dest: destinationDir });
       guard('archiveHandler');
-      const listing = await system.archiveList(archivePath);
+      const listing = await system.archiveList(archivePath, signal);
       if (listing.rejected > 0) {
         throw new FilePluginError(ErrorCode.PATH_DENIED, 'archive contains unsafe members');
+      }
+      // Detailed mode carries member types. Refuse links/devices before any extraction.
+      const zip = ['.zip', '.jar'].includes(path.extname(archivePath).toLowerCase());
+      const details = await run(zip ? 'unzip' : 'tar', zip ? ['-Z', '-l', archivePath] : ['-tvf', archivePath], { timeoutMs, signal });
+      if (details.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'archive inspection failed');
+      const modes = details.stdout.split('\n').filter((line) => /^[bcdhlps-][rwxStTs-]{9}/.test(line));
+      if (modes.length !== listing.entries.length || modes.some((line) => !['-', 'd'].includes(line[0]))) {
+        throw new FilePluginError(ErrorCode.PATH_DENIED, 'archive contains unsupported or linked members');
+      }
+      // Existing symlink directories could redirect otherwise harmless members.
+      for (const entry of listing.entries) {
+        authorizeMember?.(entry.path);
+        const parts = entry.path.split('/').filter(Boolean);
+        let current = destinationDir;
+        for (const part of parts) {
+          current = path.join(current, part);
+          try {
+            if (fs.lstatSync(current).isSymbolicLink()) throw new FilePluginError(ErrorCode.PATH_DENIED, 'archive target contains a symlink');
+          } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        }
       }
       fs.mkdirSync(destinationDir, { recursive: true });
       const ext = path.extname(archivePath).toLowerCase();
       const result = ['.zip', '.jar'].includes(ext)
-        ? await run('unzip', ['-n', '-q', archivePath, '-d', destinationDir], { timeoutMs })
-        : await run('tar', ['-xkf', archivePath, '-C', destinationDir], { timeoutMs });
+        ? await run('unzip', ['-n', '-q', archivePath, '-d', destinationDir], { timeoutMs, signal })
+        : await run('tar', ['-xkf', archivePath, '-C', destinationDir], { timeoutMs, signal });
       if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'archive extraction failed');
       return { path: destinationDir, count: listing.entries.length };
     },

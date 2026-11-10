@@ -1,4 +1,4 @@
-# 插件契约 · @dsh/files v0.1.0
+# 插件契约 · @dsh/files v0.1.1
 
 > 本文是插件的正式契约：边界、对外接口、输入输出、依赖项、配置项。
 > 命令级行为对照见 [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md)，智能体接入见
@@ -81,6 +81,8 @@ plugin.tools() // [{ name: 'file_list_dir', method: 'list_dir', description,
 工具名规则 `file_<命令名>`。所有适配器（DSH / zcode / MCP / HTTP）消费**同一份**目录；
 `callTool(service, name, args)` 是共享调用入口。默认只暴露对智能体有意义的工具
 （`tool: true`），43 个命令仍全部可通过 `call`/`handle` 调用。
+`toolOptions.prefix/include/exclude` 决定实际工具目录，`exclude` 优先，未公开工具不能通过 `tools/call` 绕过。
+DSH 原生安装入口为包导出 `@dsh/files/dsh`，见 `docs/AGENT_ADAPTERS.md`。
 
 ### 2.3 统一适配器接口
 
@@ -133,6 +135,8 @@ interface Backend {
 - `id`：1..128 字节非空字符串；`method`：1..64 字节且必须在命令表内；`params` 必须是对象。
 - 参数采用**严格白名单**：任何未声明的键 → `unknown parameter: <key>`（移植自
   `protocol.rs::validate_request`）。
+- 命令表中的必填项和 `copy/move` 的成对路径在后端调用前验证；`params:null` 拒绝。
+- `uploadId` 为 1..128 个英文字母、数字、下划线或短横线，不能包含路径分隔符。
 - 字符串参数 ≤ 4 MiB；`import_chunk.data` ≤ 700000 字符；`paths` 为 1..200 项、每项 ≤ 4096 字符；
   `limit` 1..2000；`offset` ≤ 100000；`sortBy` ∈ `name|size|mtime`；`sortDir` ∈ `asc|desc`；
   `conflict` ∈ `rename|skip`；`expectedMtime` 必须是有限数；布尔参数必须真是布尔值。
@@ -145,7 +149,7 @@ interface Backend {
 | `ListDirResult` | `path, parent, entries[], project?, hasMore`（分页） |
 | `StatResult` | `found, path, name?, isDir?, kind?, size?, mtime?, btime?, symlink?, dirHint?`；不存在返回 `{found:false}` 而非报错 |
 | `ReadFileResult` | `content, truncated, size, mtime, kind, encoding`；> 2 MiB 截断到 256 KiB |
-| `WriteResult` | `path, mtime, conflict`（`expectedMtime` 不符时 `conflict:true` 且不写入） |
+| `WriteResult` | `path, mtime, conflict`；旧版本不符或文件被删除时 `conflict:true`，删除时 `mtime:null`；同一实例同一路径串行写入，保留已有文件权限 |
 | `PreviewResult` | `data`(base64), `mimeType, size, mtime` |
 | `DiskUsageResult` | `path, bytes, files, directories, truncated, errors, items[]` |
 | `SearchResult` | `entries[], hasMore, truncated, contentUnavailable` |
@@ -167,7 +171,7 @@ wire 的 `error` 恒为**字符串**；内部使用结构化 `FilePluginError { 
 | `CONFLICT` | 409 | 目标冲突、导入未完成、mtime 乐观锁冲突 |
 | `CAPABILITY_UNAVAILABLE` | 501 | OS 能力被禁用且未注入处理器 |
 | `BACKEND_UNAVAILABLE` | 503 | 可选兼容后端不可用 |
-| `TOO_MANY_TASKS` | 429 | 超过 `maxConcurrentTasks` |
+| `TOO_MANY_TASKS` | 429 | 重操作并发超过 `maxConcurrentTasks`（仅 `search`/`locate`/`read_file`/`archive_list`/`create_zip`/`extract_archive`/`*_batch`）；`import_begin` 超 `maxConcurrentImports` |
 | `CANCELLED` / `TIMEOUT` / `INTERNAL` | 500 | 取消 / 命令超时 / 内部错误 |
 
 安全文案：内部错误与含路径分隔符的消息一律替换为 `文件操作失败`（对齐 `protocol.rs::safe_error`），
@@ -230,7 +234,7 @@ Natives 代码，session/CSRF/Origin 由宿主在 `rpc` 中处理。
 | `backendOptions.headers` | object | `{}` | — | 供宿主注入会话 / CSRF 头 |
 | `backendOptions.timeoutMs` | number | `30000` | — | 兼容后端 RPC 超时 |
 | `homeDir` | 绝对路径 | `os.homedir()` | `DSH_FILES_HOME` | `~` 展开与默认允许根 |
-| `stateDir` | 绝对路径 | `<home>/.dsh/files` | `DSH_FILES_STATE_DIR` | 导入临时文件等插件自身状态 |
+| `stateDir` | 绝对路径 | `<home>/.dsh/files` | `DSH_FILES_STATE_DIR` | 插件状态目录；导入暂存改为目标同目录，避免跨卷 hard_link 失败 |
 | `tempDir` | 绝对路径 | `os.tmpdir()` | `DSH_FILES_TMP` | 临时目录白名单 |
 | `allowedRoots` | string[] | `[]` | — | 额外允许的根（绝对路径） |
 | `deniedNames` | string[] | `.ssh, .gnupg, .aws, .config/gh, .kube` | — | 敏感目录黑名单 |
@@ -261,12 +265,16 @@ Natives 代码，session/CSRF/Origin 由宿主在 `rpc` 中处理。
 | `maxConcurrentTasks` | 8 | `maxConcurrentImports` | 4 |
 | `maxWatchEvents` | 1024 | `watchDebounceMs` | 250 |
 | `defaultListLimit` | 500 | `defaultPageWindow` | 100001 |
-| `commandTimeoutMs` | 30000 | | |
+| `commandTimeoutMs` | 30000 | `maxWatchers` | 64 |
 
 `describeConfig(config)` 返回脱敏后的可序列化配置视图。
 `maxConcurrentImports` 限制同时存在的分块导入会话数，超限返回 `TOO_MANY_TASKS`；
-`locateHandler`（即 `mdfind` 加速）与 `pdfTextHandler` 属于可选加速钩子，缺失时能力不降级，
-只是回退到内置实现。
+`maxConcurrentTasks` 与原宿主一致，**只**对 `search`、`locate`、`read_file`、`archive_list`、
+`create_zip`、`extract_archive` 和四个 `*_batch` 生效（原 `main.rs:328-340` 亦如此），
+`write_file`、`list_dir`、`stat` 等轻量命令不受该预算限制，智能体可安全并发调用；
+任务登记表仍覆盖全部命令，取消与进度回调因此照常可用。
+`locateHandler`（即 `mdfind` 加速）失败时回退到有界目录遍历；全文检索不使用仅名称的加速结果。
+PDF 内容提取失败标记 `contentUnavailable:true`，不伪装成无匹配。限制配置必须为正安全整数，安全开关必须为布尔值。
 
 ---
 
@@ -276,12 +284,14 @@ Natives 代码，session/CSRF/Origin 由宿主在 `rpc` 中处理。
 createFilePlugin() -> backend.init() -> attach()/start() -> 调用 -> dispose()
 ```
 
-- `dispose()`：逆序停止适配器 → abort 全部在途任务 → 关闭 `fs.watch` → 清理未提交的导入临时文件。
-- 取消：`*_cancel` 命令按 `requestId` abort 对应 `AbortSignal`；搜索 / 批量 / 导入 / 预览均响应取消。
+- `dispose()`：逆序停止适配器 → abort 并等待在途任务结束 → 关闭 `fs.watch` → 清理未提交的导入临时文件。
+- 取消：`*_cancel` 按 `requestId` abort 信号；搜索、批量和归档子进程协作取消。小型原子操作开始后可能完成；导入会话用 `import_cancel` 清理。
 - 并发：`maxConcurrentTasks` 上限由 `FileService` 统一强制。
 - 事件（通过 `service.on(type, fn)` 或 `config.events`）：
   `changed`（写命令成功后）、`fs_changed`（监听去噪后）、`progress`（批量 / 导入进度）、
   `error`（内部错误）、`*`（全部，供适配器转发为宿主通知）。
+- 文件事件新增 `changes` 数组和 `overflow` 标记，保留同一防抖窗口的所有文件名；超限后宿主刷新目录。
+- 停止监听会取消其定时器及尚未发出的事件；监听器异常不改变文件操作结果。
 
 ---
 
@@ -289,10 +299,10 @@ createFilePlugin() -> backend.init() -> attach()/start() -> 调用 -> dispose()
 
 1. **授权句柄**：所有路径先经 `AccessPolicy.authorize()` → 规范化（含不存在目标的最近存在祖先）
    → 拒绝 `..` / NUL / 悬空符号链接 → 黑名单 → 白名单 → 返回 `AuthorizedPath`。
-   具体操作只接受句柄，**不接受调用方原始字符串**，杜绝 TOCTOU 重路由。
+   搜索内容、递归复制和归档子项也分别授权。此实现基于路径 API，不能消除外部进程并发替换路径的所有 TOCTOU 竞态，不能作为恶意本地进程的隔离沙箱。
 2. **只读模式**：`allowWrite: false` 在 `FileService` 层统一拒绝全部 `mutates` 命令，后端不接触。
 3. **OS 能力显式化**：默认可用但可整体关闭；关闭后不执行任何外部命令，返回明确错误。
-4. **归档安全**：拒绝绝对路径 / `..` 成员；解包不覆盖已有文件（`-n` / `-xk`）。
+4. **归档安全**：拒绝绝对路径 / `..` 成员、链接与设备成员、目标路径中的符号链接；逐成员 WRITE 授权。命令输出超限失败，不使用截断清单。解包不覆盖已有文件（`-n` / `-xk`），不提供磁盘配额或解压体积沙箱。
 5. **有界性**：读取、预览、搜索、磁盘统计、批量、导入、监听事件全部有硬上限，
    避免单个智能体请求拖垮宿主。
 6. **错误脱敏**：内部错误不泄漏路径；wire `error` 恒为字符串。
@@ -311,12 +321,15 @@ createFilePlugin() -> backend.init() -> attach()/start() -> 调用 -> dispose()
   - `roots` 基于 `config.homeDir` 而非 `dirs::home_dir()`；
   - `list_dir` 的 `probeProjects` 真正生效（原 `list_dir_page_with_options` 未使用该参数）；
   - OS 相关命令改为注入式，未注入且关闭时返回 `CAPABILITY_UNAVAILABLE`；
-  - 监听使用 Node `fs.watch`（非递归）而非 `notify` crate；去噪策略一致。
+  - 监听使用 Node `fs.watch`（非递归）而非 `notify` crate；去噪与事件上限策略一致，
+    但事件类型改由「目录名单播种 + 窗口末 stat」推断；启动后核对一次有界名单，补回漏发的创建和删除；改名呈现为 `changes` 中的删除和创建，
+    窗口内创建后删除可能不产生逐文件记录，超限按目录失效处理。见 CAPABILITY_MATRIX 的 `watch_start` 行。
 
 ## 9. 验收
 
 ```bash
 npm test             # 协议 / 授权 / 文件操作 / 服务 / 后端 / 5 类适配器 / 端到端 / 原项目桥接
 npm run check        # 测试 + 命令表 / 工具目录 / 文档 / 版本一致性门禁
+npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules
 node bin/cli.mjs describe
 ```

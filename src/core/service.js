@@ -16,6 +16,16 @@ const CANCEL_METHODS = new Set([
   'search_cancel', 'locate_cancel', 'preview_cancel', 'batch_cancel',
 ]);
 
+// Only long-running operations are admission-controlled, matching the original
+// native-file-host main loop (main.rs:328-340). Cheap calls such as write_file,
+// list_dir and stat were never queued there, so a host issuing parallel writes
+// must not be told TOO_MANY_TASKS.
+const GATED_METHODS = new Set([
+  'search', 'locate', 'read_file',
+  'archive_list', 'create_zip', 'extract_archive',
+  'copy_batch', 'move_batch', 'duplicate_batch', 'trash_batch',
+]);
+
 export class FileService {
   constructor({ config, backend, policy, systemTools, toolOptions = {} }) {
     this.config = config;
@@ -61,7 +71,10 @@ export class FileService {
       }
     }
     // Generic bus for adapters that forward every event.
-    for (const listener of this.listeners.get('*') ?? []) listener({ type, payload });
+    for (const listener of this.listeners.get('*') ?? []) {
+      try { listener({ type, payload }); }
+      catch (error) { this.config.log?.('event listener failed', type, error); }
+    }
   }
 
   /** Structured API: throws FilePluginError. Used by in-process and tool calls. */
@@ -75,11 +88,17 @@ export class FileService {
       return this.cancel(validated.requestId);
     }
 
-    if (this.tasks.size >= this.config.limits.maxConcurrentTasks) {
+    // Tasks are always tracked (cancellation and progress need them); the
+    // admission limit only applies to the heavy operations.
+    if (this.tasks.has(id)) throw new FilePluginError(ErrorCode.CONFLICT, 'request id is already in flight');
+    if (options.signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
+    if (GATED_METHODS.has(name) && [...this.tasks.values()].filter((task) => GATED_METHODS.has(task.method)).length >= this.config.limits.maxConcurrentTasks) {
       throw new FilePluginError(ErrorCode.TOO_MANY_TASKS, 'too many concurrent file tasks');
     }
     const controller = new AbortController();
-    const task = { id, controller, method: name };
+    let finish;
+    const done = new Promise((resolve) => { finish = resolve; });
+    const task = { id, controller, method: name, done };
     this.tasks.set(id, task);
     try {
       const result = await this.backend.handle(name, validated, {
@@ -90,7 +109,7 @@ export class FileService {
         emit: (type, payload) => this.emit(type, payload),
         config: this.config,
       });
-      if (command.mutates) this.emit('changed', { requestId: id, method: name });
+      if (command.mutates && result?.conflict !== true && result?.skipped !== true) this.emit('changed', { requestId: id, method: name });
       return result;
     } catch (error) {
       const structured = asFilePluginError(error);
@@ -98,6 +117,7 @@ export class FileService {
       throw structured;
     } finally {
       this.tasks.delete(id);
+      finish();
     }
   }
 
@@ -105,7 +125,8 @@ export class FileService {
   async handle(request) {
     const id = typeof request?.id === 'string' ? request.id : '';
     try {
-      const result = await this.call(request?.method, request?.params ?? {}, { requestId: id });
+      validateRequest(request, this.config);
+      const result = await this.call(request.method, request.params, { requestId: id });
       return { id, ok: true, result };
     } catch (error) {
       const structured = asFilePluginError(error);
@@ -155,7 +176,8 @@ export class FileService {
     if (this.disposed) return;
     this.disposed = true;
     for (const task of this.tasks.values()) task.controller.abort(new Error('service disposed'));
-    this.tasks.clear();
+    await Promise.all([...this.tasks.values()].map((task) => task.done));
     await this.backend.dispose?.();
+    this.listeners.clear();
   }
 }

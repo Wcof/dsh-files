@@ -2,7 +2,7 @@
  * DeepSeek Harness (DSH) adapter.
  *
  * Unlike the old `@natives/dsh-files` shell, this adapter does NOT iframe the
- * whole Natives Core. It registers three same-origin, read-mostly routes on
+ * whole Natives Core. It registers same-origin API routes on
  * the DSH Host `webServer` and exposes the same tool catalogue every other
  * agent sees. The host may render its own panel using `clientSpec`; the plugin
  * ships no React, no Natives CSS, no port 8770 dependency and no product data.
@@ -24,12 +24,15 @@ defineAdapter('dsh', (options = {}) => {
   const prefix = options.routePrefix ?? '/agent/files';
   const panelId = options.panelId ?? 'universal-files';
   const disposers = [];
+  const streams = new Set();
+  const applied = new WeakSet();
 
   const routes = [
     { method: 'GET', path: `${prefix}/tools` },
     { method: 'GET', path: `${prefix}/describe` },
     { method: 'POST', path: `${prefix}/rpc` },
     { method: 'POST', path: `${prefix}/tools/call` },
+    { method: 'GET', path: `${prefix}/events` },
   ];
 
   /** Pure dispatcher: usable in tests and by hosts that own their own server. */
@@ -38,6 +41,10 @@ defineAdapter('dsh', (options = {}) => {
     if (options.sameOriginOnly !== false && !isSameOrigin(request)) {
       return { status: 403, payload: { code: 'cross-origin', message: 'same-origin only' } };
     }
+    const route = routes.find((entry) => entry.path === path);
+    if (!route) return { status: 404, payload: { ok: false, error: 'not found' } };
+    if (route.method !== method) return { status: 405, payload: { ok: false, error: 'method not allowed' } };
+    if (path === `${prefix}/events`) return { status: 400, payload: { ok: false, error: 'use the HTTP event stream' } };
     if (method === 'GET' && path === `${prefix}/tools`) {
       return { status: 200, payload: toDshManifest(service.tools(), { routePrefix: prefix }) };
     }
@@ -55,9 +62,9 @@ defineAdapter('dsh', (options = {}) => {
       }
     }
     if (parsed === undefined) parsed = query;
-    if (path === `${prefix}/tools/call` || typeof parsed?.name === 'string') {
+    if (path === `${prefix}/tools/call`) {
       try {
-        const result = await callTool(service, parsed.name, parsed.arguments ?? parsed.input ?? {});
+        const result = await callTool(service, parsed?.name, parsed?.arguments ?? parsed?.input ?? {});
         return { status: 200, payload: { ok: true, result } };
       } catch (error) {
         return {
@@ -67,6 +74,34 @@ defineAdapter('dsh', (options = {}) => {
       }
     }
     return { status: 200, payload: await service.handle(parsed) };
+  }
+
+  function subscribe(request, response) {
+    if (!isSameOrigin(request)) return jsonReply(response, 403, { ok: false, error: 'same-origin only' });
+    if (streams.size >= 32) return jsonReply(response, 503, { ok: false, error: 'too many event subscribers' });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    response.write(': connected\n\n');
+    let closed = false;
+    const unsubscribe = service.on('*', ({ type, payload }) => {
+      if (!closed && !response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`)) close();
+    });
+    const heartbeat = setInterval(() => {
+      if (!response.write(': heartbeat\n\n')) close();
+    }, 15000);
+    heartbeat.unref?.();
+    function close() {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+      streams.delete(close);
+      response.off('close', close);
+      response.off('error', close);
+      response.end();
+    }
+    streams.add(close);
+    response.once('close', close);
+    response.once('error', close);
   }
 
   const handle = {
@@ -94,12 +129,14 @@ defineAdapter('dsh', (options = {}) => {
       if (!webServer || typeof webServer.register !== 'function') {
         throw new Error('DSH host context must provide webServer.register()');
       }
+      if (applied.has(pluginContext)) return handle;
       const registerOne = (route) =>
         webServer.register({
           kind: 'exact',
           path: route.path,
           handler: async (request, response) => {
             try {
+              if (route.path === `${prefix}/events` && request.method === 'GET') return subscribe(request, response);
               const body = request.method === 'POST' ? await readRequestBody(request) : undefined;
               const url = new URL(request.url ?? route.path, 'http://127.0.0.1');
               const query = Object.fromEntries(url.searchParams.entries());
@@ -121,15 +158,22 @@ defineAdapter('dsh', (options = {}) => {
           },
         });
 
-      if (typeof pluginContext.effect === 'function') {
+      try {
         for (const route of routes) {
-          pluginContext.effect(() => registerOne(route), `${panelId}:${route.method}:${route.path}`);
+          const rawDispose = registerOne(route);
+          let active = true;
+          const dispose = () => {
+            if (!active) return;
+            active = false;
+            return rawDispose?.();
+          };
+          disposers.push(dispose);
+          pluginContext.effect?.(() => dispose, `${panelId}:${route.method}:${route.path}`);
         }
-      } else {
-        for (const route of routes) {
-          const disposer = registerOne(route);
-          if (typeof disposer === 'function') disposers.push(disposer);
-        }
+        applied.add(pluginContext);
+      } catch (error) {
+        for (const dispose of disposers.splice(0)) dispose();
+        throw error;
       }
       return handle;
     },
@@ -145,6 +189,7 @@ defineAdapter('dsh', (options = {}) => {
       return handle;
     },
     async stop() {
+      for (const close of [...streams]) close();
       for (const dispose of disposers.splice(0)) {
         try {
           await dispose();

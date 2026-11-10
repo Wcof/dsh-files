@@ -99,14 +99,21 @@ export function jsonReply(response, status, payload) {
 
 export function readRequestBody(request, maxBytes = 8 * 1024 * 1024) {
   if (request.body !== undefined) {
-    return Promise.resolve(typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
+    const body = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+    if (Buffer.byteLength(body) > maxBytes) return Promise.reject(new FilePluginError(ErrorCode.INVALID_REQUEST, 'request body is too large'));
+    return Promise.resolve(body);
   }
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let failed = false;
     request.on('data', (chunk) => {
+      if (failed) return;
+      chunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += chunk.length;
       if (size > maxBytes) {
+        failed = true;
+        chunks.length = 0;
         reject(new FilePluginError(ErrorCode.INVALID_REQUEST, 'request body is too large'));
         return;
       }
@@ -114,5 +121,6 @@ export function readRequestBody(request, maxBytes = 8 * 1024 * 1024) {
     });
     request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     request.on('error', reject);
+    request.on('aborted', () => reject(new FilePluginError(ErrorCode.CANCELLED, 'request aborted')));
   });
 }

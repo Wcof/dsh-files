@@ -7,7 +7,6 @@
  * with the same 3-method shape via `config.backend`.
  */
 
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { FilePluginError, ErrorCode } from '../protocol/errors.js';
@@ -15,39 +14,34 @@ import { Operation } from './access-policy.js';
 import { defaultRoots, listDir, statPath, diskUsage } from './entries.js';
 import { readTextFile, readBinaryPreview } from './preview.js';
 import { runSearch } from './search.js';
+import { watchDirectory } from './watch.js';
 import {
   writeFileAtomic, createEntry, renameEntry, copyEntry,
-  moveEntry, duplicateEntry, runBatch, ImportManager,
+  moveEntry, duplicateEntry, runBatch, ImportManager, resolveTarget,
 } from './ops.js';
 
 export function createLocalBackend(config, { policy, systemTools, emit }) {
   const imports = new ImportManager({ config, policy });
   const watchers = new Map();
+  const writes = new Map();
 
-  function watch(target, ctx) {
-    if (watchers.has(target)) return { ok: true };
-    let pending = 0;
-    let timer = null;
-    const flush = (kind, filename) => {
-      pending += 1;
-      if (pending > config.limits.maxWatchEvents) pending = config.limits.maxWatchEvents;
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        emit('fs_changed', {
-          kind,
-          path: filename ? path.join(target, String(filename)) : target,
-          count: pending,
-        });
-        pending = 0;
-      }, config.limits.watchDebounceMs);
-      timer.unref?.();
-    };
-    const watcher = fs.watch(target, { recursive: false }, (eventType, filename) => {
-      flush(eventType === 'rename' ? 'created' : 'modified', filename);
+  async function write(params, signal) {
+    const target = resolveTarget(policy, params.parent, params.name);
+    const previous = writes.get(target) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(() => {
+      if (signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
+      return writeFileAtomic(policy, params, config);
     });
-    watcher.on('error', (error) => emit('error', { path: target, message: String(error?.message ?? error) }));
-    watchers.set(target, watcher);
+    writes.set(target, pending);
+    try { return await pending; }
+    finally { if (writes.get(target) === pending) writes.delete(target); }
+  }
+
+  function watch(target) {
+    for (const [key, watcher] of watchers) if (watcher.closed) watchers.delete(key);
+    if (watchers.has(target)) return { ok: true };
+    if (watchers.size >= config.limits.maxWatchers) throw new FilePluginError(ErrorCode.TOO_MANY_TASKS, 'too many filesystem watches');
+    watchers.set(target, watchDirectory(target, config, emit));
     return { ok: true };
   }
 
@@ -63,6 +57,22 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
     // The guard lives in createSystemTools so injected handlers still work
     // when system commands are disabled.
     return systemTools[hook](...args);
+  }
+
+  async function authorizeArchiveSources(sources, signal) {
+    const queue = [...sources];
+    let count = 0;
+    while (queue.length) {
+      if (signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
+      if (++count > config.limits.maxDiskUsageEntries) throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'archive input is too large');
+      const target = queue.pop();
+      policy.authorize(target, Operation.READ);
+      const info = await fsp.lstat(target);
+      if (info.isSymbolicLink()) throw new FilePluginError(ErrorCode.PATH_DENIED, 'archive input contains a symlink');
+      if (info.isDirectory()) {
+        for (const child of await fsp.readdir(target)) queue.push(path.join(target, child));
+      }
+    }
   }
 
   async function handle(method, params, ctx = {}) {
@@ -98,7 +108,7 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
 
       case 'archive_list': {
         const target = policy.authorize(params.path, Operation.READ).path;
-        return osCall('archiveList', target);
+        return osCall('archiveList', target, signal);
       }
       case 'create_zip': {
         if (!policy.validName(params.name)) {
@@ -106,12 +116,13 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
         }
         const dest = policy.authorize(params.dest, Operation.WRITE).path;
         const sources = params.paths.map((raw) => policy.authorize(raw, Operation.READ).path);
-        return osCall('createZip', sources, dest, params.name);
+        await authorizeArchiveSources(sources, signal);
+        return osCall('createZip', sources, dest, params.name, signal);
       }
       case 'extract_archive': {
         const source = policy.authorize(params.path, Operation.READ).path;
         const dest = policy.authorize(params.dest, Operation.WRITE).path;
-        return osCall('extractArchive', source, dest);
+        return osCall('extractArchive', source, dest, (member) => policy.authorize(path.join(dest, member), Operation.WRITE), signal);
       }
 
       case 'create_folder':
@@ -119,7 +130,7 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
       case 'create_file':
         return createEntry(policy, params.parent, params.name, 'file');
       case 'write_file':
-        return writeFileAtomic(policy, params, config);
+        return write(params, signal);
       case 'rename':
         return renameEntry(policy, params.path, params.name);
       case 'copy':
