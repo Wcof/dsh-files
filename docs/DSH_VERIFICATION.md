@@ -18,6 +18,12 @@ npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules /absolute/path/t
 原始应用 ASAR SHA-256：`f21d83abfb33d463822a52c439cc9b15c8245dbce4ae4cf9424c90eae8eba94f`。
 REA 静态记录：`ev_e01511af82e6d4919feb354389514e40fb2df8c0fa94e8e6e18b85b709a0e8f9`。
 
+## GitHub 与 PlugBox 分发
+
+`0.1.1` 的运行代码提交为 `9dc5e08caf579486b468ce3265b14fe4ba4c05ee`。
+已通过 pnpm 从公开 GitHub 地址安装到隔离目录，并对实际下载的包运行上述 DSH 检查。
+[PlugBox 收录申请](https://github.com/Wcof/PlugBox/issues/4) 对应的精选索引固定到此提交；使用真实 DSH 市场服务读取已发布索引，按 `@dsh/files`、`DSH Files`、文件工具均能检索到，兼容判定与安装参数正确。
+
 ## 一手参考
 
 - [DSH 组合包安装文档](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/user/develop/basic/publish.md)：`dsh.bundle.patch`、安装后 profile 组合、本地目录与 GitHub 安装。

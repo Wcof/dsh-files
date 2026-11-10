@@ -28,6 +28,7 @@ https://github.com/Wcof/dsh-files.git
 ```
 
 在 [PlugBox](https://github.com/Wcof/PlugBox) 的「安装插件」对话框中也可使用同一地址。
+已订阅 [PlugBox 精选索引](https://raw.githubusercontent.com/Wcof/PlugBox/main/index.json) 时，刷新插件市场并搜索 `@dsh/files`、`DSH Files` 或「文件工具」即可安装。市场版本固定到经过验证的提交。
 
 也可以先完全退出桌面版，再使用已安装的 DSH CLI：
 
