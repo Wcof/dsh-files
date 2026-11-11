@@ -20,11 +20,18 @@ test('file page serves only bundled assets and rejects cross-origin or mutating 
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'self'/);
   const html = await page.text();
-  for (const file of [...html.matchAll(/(?:src|href)="\.\/([^"\s]+)"/g)].map(match => match[1])) assert.equal((await fetch(`${base}/dsh-files/${file}`)).status, 200);
+  for (const file of [...html.matchAll(/(?:src|href)="\.\/([^"\s]+)"/g)].map(match => match[1]).concat(['icons.js', 'view-state.js', 'places-state.js', 'sidebar.js', 'locale.js', 'api.js'])) assert.equal((await fetch(`${base}/dsh-files/${file}`)).status, 200);
   assert.equal((await fetch(`${base}/dsh-files`, { redirect: 'manual' })).status, 308);
   assert.equal((await fetch(`${base}/dsh-files/app.js`, { method: 'HEAD' })).status, 200);
   assert.equal((await fetch(`${base}/dsh-files/`, { method: 'POST' })).status, 405);
   assert.equal((await fetch(`${base}/dsh-files/`, { headers: { Origin: 'https://invalid.example' } })).status, 403);
+  const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate' };
+  // fetch owns Sec-Fetch-Mode; exercise the route with real navigation headers.
+  const response = { writeHead(status) { this.status = status; }, end() {} };
+  await route.handler({ method: 'GET', url: '/dsh-files/', headers: Object.fromEntries(Object.entries(navigation).map(([key, value]) => [key.toLowerCase(), value])) }, response);
+  assert.equal(response.status, 200);
+  await route.handler({ method: 'GET', url: '/dsh-files/app.js', headers: { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } }, response);
+  assert.equal(response.status, 403);
   for (const suffix of ['../package.json', '%2e%2e%2fpackage.json', 'api.js/../../package.json', 'missing.js']) assert.equal((await fetch(`${base}/dsh-files/${suffix}`)).status, 404);
 });
 
@@ -68,27 +75,41 @@ test('browser uploads preserve Unicode bytes and cancel unfinished sessions befo
 
 async function pageHarness(overrides = {}) {
   const nodes = new Map();
-  const checkbox = { disabled: true };
   const document = {
+    documentElement: { dataset: {} },
     getElementById(id) {
-      if (!nodes.has(id)) nodes.set(id, { classList: { toggle() {} } });
+      if (!nodes.has(id)) nodes.set(id, { classList: { toggle() {} }, setAttribute(key, value) { this[key] = value; }, querySelector() { return null; } });
       return nodes.get(id);
     },
-    querySelectorAll(selector) { return selector === '#rows input[type="checkbox"]' ? [checkbox] : []; },
+    querySelectorAll() { return []; },
   };
   const source = (await fs.readFile(new URL('../web/app.js', import.meta.url), 'utf8'))
     .replace(/^import .*;\n/gm, '').replace('void boot();', '');
-  const context = vm.createContext({ document, TextEncoder, toBase64, parentOf: value => value.slice(0, value.lastIndexOf('/')), t: key => key, ...overrides });
-  vm.runInContext(`${source}\nrenderPreview = () => {}; load = async () => {}; globalThis.page = { state, controls, saveText, dirty };`, context);
-  return { ...context.page, nodes, checkbox };
+  const context = vm.createContext({
+    document, TextEncoder, AbortController, URL,
+    navigator: { pdfViewerEnabled: true },
+    rawPreviewUrl: value => `/raw?path=${encodeURIComponent(value)}`,
+    toBase64, parentOf: value => value.slice(0, value.lastIndexOf('/')), t: key => key,
+    ...overrides,
+  });
+  vm.runInContext(`${source}\nrenderPreview = () => {}; load = async () => {}; globalThis.page = { state, controls, saveText, dirty, choose, closePreview, actionDisabled, menuLabels: MENU_LABELS };`, context);
+  return { ...context.page, nodes };
 }
 
 test('page re-enables row selection after a file operation completes', async () => {
   const page = await pageHarness();
   page.state.busy = true; page.controls();
-  assert.equal(page.checkbox.disabled, true);
+  assert.equal(page.nodes.get('rows')['aria-disabled'], 'true');
   page.state.busy = false; page.controls();
-  assert.equal(page.checkbox.disabled, false);
+  assert.equal(page.nodes.get('rows')['aria-disabled'], 'false');
+});
+
+test('disabled OS integration permits folder navigation but disables default-app actions', async () => {
+  const page = await pageHarness();
+  const entry = { path: '/fixture', isDir: false };
+  page.state.entries = [entry]; page.state.selected.add(entry.path);
+  page.controls(); assert.equal(page.nodes.get('open').disabled, true);
+  entry.isDir = true; page.controls(); assert.equal(page.nodes.get('open').disabled, false);
 });
 
 test('edits typed while a save is in flight remain an unsaved draft', async () => {
@@ -107,6 +128,50 @@ test('edits typed while a save is in flight remain an unsaved draft', async () =
   assert.equal(page.state.preview.draft, 'typed during save');
   assert.equal(page.dirty(), true);
   assert.equal(page.nodes.get('save-text').disabled, false);
+});
+
+test('binary previews use the whole-file stream and ignore the tool size limit', async () => {
+  const calls = [];
+  const page = await pageHarness({ call: async method => { calls.push(method); return { content: 'hello', kind: 'text', truncated: false, size: 5, mtime: 1 }; } });
+  page.state.info = { limits: { maxPreviewBytes: 512 * 1024, maxPaths: 200 }, security: { allowWrite: true }, backendCapabilities: { osIntegration: true } };
+  await page.choose({ path: '/fixture/big.png', name: 'big.png', kind: 'image', size: 5 * 1024 * 1024, isDir: false });
+  assert.equal(calls.includes('image_preview'), false, 'large images must not be rejected before rendering');
+  assert.match(page.state.preview.result.url, /^\/raw\?path=/);
+  assert.equal(page.state.preview.hint, undefined);
+  await page.choose({ path: '/fixture/note.txt', name: 'note.txt', kind: 'text', size: 5, isDir: false });
+  assert.equal(calls.at(-1), 'read_file', 'text reads keep the existing command');
+});
+
+test('PDF without a native viewer still produces a renderable preview source', async () => {
+  const page = await pageHarness({ navigator: { pdfViewerEnabled: false }, call: async () => ({}) });
+  await page.choose({ path: '/fixture/doc.pdf', name: 'doc.pdf', kind: 'pdf', size: 8 * 1024 * 1024, isDir: false });
+  assert.match(page.state.preview.result.url, /^\/raw\?path=/);
+  assert.equal(page.state.preview.hint, 'pdfUnavailable');
+});
+
+test('closing the preview pane is not blocked by a running file operation', async () => {
+  const page = await pageHarness();
+  page.state.previewOpen = true; page.state.busy = true;
+  await page.closePreview();
+  assert.equal(page.state.previewOpen, false);
+  assert.equal(page.nodes.get('preview').hidden, true);
+  await page.closePreview();
+  assert.equal(page.state.previewOpen, false);
+});
+
+test('context menu labels and disabled states are complete in both languages', async () => {
+  const page = await pageHarness();
+  const ids = Object.keys(page.menuLabels);
+  assert.ok(ids.length >= 18);
+  for (const key of Object.values(page.menuLabels)) {
+    assert.ok(messages.zh[key], `missing zh label ${key}`);
+    assert.ok(messages.en[key], `missing en label ${key}`);
+  }
+  for (const key of ['openFolder', 'recycle', 'editText', 'selectAll', 'upload']) {
+    assert.ok(messages.zh[key] && messages.en[key], `missing label ${key}`);
+  }
+  const disabled = page.actionDisabled();
+  for (const id of ids) assert.equal(typeof disabled[id], 'boolean', `missing disabled state for ${id}`);
 });
 
 test('page event subscriptions return structured errors for inaccessible directories', async () => {

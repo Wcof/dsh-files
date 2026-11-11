@@ -19,6 +19,7 @@ const HOME_ROOT_NAMES = ['Desktop', 'Documents', 'Downloads', 'Library', 'Movies
 
 export function defaultRoots(config) {
   const home = config.homeDir;
+  const platform = config.tools?.platform ?? process.platform;
   const candidates = [
     ['home', 'Home', home],
     ['desktop', 'Desktop', path.join(home, 'Desktop')],
@@ -26,17 +27,17 @@ export function defaultRoots(config) {
     ['downloads', 'Downloads', path.join(home, 'Downloads')],
     ['pictures', 'Pictures', path.join(home, 'Pictures')],
     ['projects', 'Projects', path.join(home, 'Projects')],
-    ['movies', 'Movies', path.join(home, 'Movies')],
+    ['movies', platform === 'win32' ? 'Videos' : 'Movies', path.join(home, platform === 'win32' ? 'Videos' : 'Movies')],
     ['music', 'Music', path.join(home, 'Music')],
   ];
   const roots = [];
   for (const [id, name, candidate] of candidates) {
     // macOS TCC: never probe protected home children, show them optimistically.
-    if (HOME_ROOT_NAMES.includes(path.basename(candidate)) || isDirectorySyncSafe(candidate)) {
+    if (platform === 'darwin' && HOME_ROOT_NAMES.includes(path.basename(candidate)) || isDirectorySyncSafe(candidate)) {
       roots.push({ id, name, path: candidate });
     }
   }
-  if (isDirectorySyncSafe('/tmp')) roots.push({ id: 'tmp', name: 'tmp', path: '/tmp' });
+  if (isDirectorySyncSafe(config.tempDir)) roots.push({ id: 'tmp', name: 'tmp', path: config.tempDir });
   return roots;
 }
 
@@ -57,6 +58,7 @@ export function sortEntries(entries, options = {}) {
     let cmp = 0;
     if (key === 'mtime') cmp = a.mtime - b.mtime;
     else if (key === 'size') cmp = a.size - b.size;
+    else if (key === 'kind') cmp = naturalCompare(a.kind, b.kind);
     else cmp = naturalCompare(a.name, b.name);
     if (!ascending) cmp = -cmp;
     return cmp === 0 ? naturalCompare(a.name, b.name) : cmp;

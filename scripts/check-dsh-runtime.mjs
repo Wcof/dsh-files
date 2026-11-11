@@ -69,7 +69,7 @@ try {
   }
   assert.equal((await fetch(`${base}/agent/files/tools`).then((r) => r.json())).tools.length, 25);
   assert.match(await fetch(`${base}/dsh-files/`).then(r => r.text()), /id="preview-content"/);
-  assert.equal((await fetch(`${base}/dsh-files/app.js`)).status, 200);
+  for (const asset of ['app.js', 'api.js', 'locale.js', 'icons.js', 'view-state.js', 'places-state.js', 'sidebar.js', 'styles.css']) assert.equal((await fetch(`${base}/dsh-files/${asset}`)).status, 200);
   assert.equal((await fetch(`${base}/dsh-files`, { redirect: 'manual' })).status, 308);
   assert.equal((await fetch(`${base}/agent/files/tools`, { method: 'POST' })).status, 405);
   assert.equal((await fetch(`${base}/agent/files/tools`, { headers: { Origin: 'https://invalid.example' } })).status, 403);

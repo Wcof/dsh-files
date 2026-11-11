@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { once } from 'node:events';
 import { makeSandbox, cleanSandbox, createStreams } from './helpers.mjs';
 import { listAdapters, createAdapter, validateAdapter, FilePluginError } from '../src/index.js';
 
@@ -124,8 +128,9 @@ test('DSH adapter registers only agent routes and never an AiNative iframe', asy
       name: 'dsh',
       options: { hostContext, panelId: 'test-files' },
     });
-    assert.equal(routes.size, 5);
+    assert.equal(routes.size, 6);
     assert.ok([...routes.keys()].every((path) => path.startsWith('/agent/files')));
+    assert.ok(routes.has('/agent/files/raw'));
     assert.equal(handle.clientSpec.panelId, 'test-files');
     assert.equal(handle.clientSpec.rendering, 'host-owned');
 
@@ -148,6 +153,57 @@ test('DSH adapter registers only agent routes and never an AiNative iframe', asy
     });
     assert.equal(raw.payload.ok, true);
   } finally {
+    await cleanSandbox(sandbox);
+  }
+});
+
+test('DSH preview stream serves whole media files with ranges and stays authorized', async () => {
+  const sandbox = await makeSandbox();
+  const routes = new Map();
+  const hostContext = {
+    webServer: {
+      register(route) { routes.set(route.path, route.handler); return () => routes.delete(route.path); },
+    },
+    effect(fn) { return fn(); },
+  };
+  let server;
+  try {
+    await sandbox.plugin.attach({ name: 'dsh', options: { hostContext } });
+    const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64');
+    const photoPath = path.join(sandbox.dir, 'photo.png');
+    await fs.writeFile(photoPath, photo);
+    const textPath = path.join(sandbox.dir, 'note.txt');
+    await fs.writeFile(textPath, 'plain text');
+    const handler = routes.get('/agent/files/raw');
+    assert.equal(typeof handler, 'function');
+    server = http.createServer((request, response) => { void handler(request, response); });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const url = `${base}/agent/files/raw?path=${encodeURIComponent(photoPath)}`;
+
+    const full = await fetch(url);
+    assert.equal(full.status, 200);
+    assert.equal(full.headers.get('content-type'), 'image/png');
+    assert.equal(full.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(full.headers.get('content-disposition'), 'inline');
+    assert.deepEqual(Buffer.from(await full.arrayBuffer()), photo);
+
+    const ranged = await fetch(url, { headers: { Range: 'bytes=2-5' } });
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get('content-range'), `bytes 2-5/${photo.length}`);
+    assert.deepEqual(Buffer.from(await ranged.arrayBuffer()), photo.subarray(2, 6));
+
+    const wrongKind = await fetch(`${base}/agent/files/raw?path=${encodeURIComponent(textPath)}`);
+    assert.equal(wrongKind.status, 400);
+    const escape = await fetch(`${base}/agent/files/raw?path=${encodeURIComponent('../outside.png')}`);
+    assert.equal(escape.status, 403);
+    const crossOrigin = await fetch(url, { headers: { Origin: 'https://evil.example' } });
+    assert.equal(crossOrigin.status, 403);
+    const dispatch = await fetch(url, { method: 'POST' });
+    assert.equal(dispatch.status, 405);
+  } finally {
+    server?.closeAllConnections?.();
+    server?.close();
     await cleanSandbox(sandbox);
   }
 });

@@ -222,6 +222,7 @@ export function createLocalBackend(config, { policy, systemTools, emit }) {
     capabilities: Object.freeze({
       protocolVersion: config.protocolVersion,
       osIntegration: config.security.allowSystemCommands,
+      platform: systemTools.platform,
       watch: true,
       import: true,
       write: config.security.allowWrite,

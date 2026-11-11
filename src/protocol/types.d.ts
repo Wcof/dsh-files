@@ -33,7 +33,7 @@ export interface FileEntry {
 }
 
 export interface ListDirOptions {
-  sortBy?: 'name' | 'size' | 'mtime';
+  sortBy?: 'name' | 'size' | 'mtime' | 'kind';
   sortDir?: 'asc' | 'desc';
   showHidden?: boolean;
   probeProjects?: boolean;

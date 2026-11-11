@@ -23,7 +23,7 @@ export function defaultCommandRunner(command, args = [], options = {}) {
     const hasStdin = typeof options.stdin === 'string' || Buffer.isBuffer(options.stdin);
     let child;
     try {
-      child = spawn(command, args, { cwd, stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+      child = spawn(command, args, { cwd, windowsHide: true, stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     } catch (error) {
       reject(new FilePluginError(ErrorCode.CAPABILITY_UNAVAILABLE, `cannot start ${command}`, { cause: error }));
       return;
@@ -98,6 +98,11 @@ export function createSystemTools(config) {
   const run = injected.commandRunner ?? defaultCommandRunner;
   const timeoutMs = config.limits.commandTimeoutMs;
   const platform = injected.platform ?? process.platform;
+  const pathsApi = platform === 'win32' ? path.win32 : path;
+  // Keep user paths out of executable source and cmd.exe metacharacter parsing.
+  const powershell = (script, data) => run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(
+    "$ErrorActionPreference = 'Stop'; [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); $data = [Console]::In.ReadToEnd() | ConvertFrom-Json; " + script,
+    'utf16le').toString('base64')], { timeoutMs, stdin: JSON.stringify(data) });
 
   const guard = (hook) => {
     if (injected[hook]) return false;
@@ -112,13 +117,18 @@ export function createSystemTools(config) {
     async open(target, mode = 'default') {
       if (injected.openHandler) return injected.openHandler(target, mode);
       guard('openHandler');
+      if (platform === 'win32') {
+        const result = await powershell(mode === 'reveal'
+          ? '$start = New-Object System.Diagnostics.ProcessStartInfo; $start.FileName = "explorer.exe"; $start.Arguments = \'/select,"\' + $data.path + \'"\'; $start.UseShellExecute = $true; [System.Diagnostics.Process]::Start($start) | Out-Null'
+          : '$start = New-Object System.Diagnostics.ProcessStartInfo; $start.FileName = $data.path; $start.UseShellExecute = $true; [System.Diagnostics.Process]::Start($start) | Out-Null', { path: target });
+        if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'open failed');
+        return { ok: true };
+      }
       const args =
         platform === 'darwin'
           ? mode === 'reveal' ? ['-R', target] : mode === 'editor' ? ['-a', injected.editorApp ?? 'TextEdit', target] : [target]
-          : platform === 'win32'
-            ? ['/c', 'start', '', target]
-            : [target];
-      const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
+          : [target];
+      const command = platform === 'darwin' ? 'open' : 'xdg-open';
       const result = await run(command, args, { timeoutMs });
       if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'open failed');
       return { ok: true };
@@ -169,6 +179,18 @@ export function createSystemTools(config) {
     async trash(targets) {
       if (injected.trashHandler) return injected.trashHandler(targets);
       guard('trashHandler');
+      if (platform === 'win32') {
+        const result = await powershell(`Add-Type -AssemblyName Microsoft.VisualBasic;
+          foreach ($target in $data.paths) {
+            if ([System.IO.Directory]::Exists($target)) {
+              [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($target, 'OnlyErrorDialogs', 'SendToRecycleBin', 'ThrowException')
+            } else {
+              [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($target, 'OnlyErrorDialogs', 'SendToRecycleBin', 'ThrowException')
+            }
+          }`, { paths: targets });
+        if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'move to Recycle Bin failed');
+        return targets;
+      }
       const results = [];
       for (const target of targets) {
         if (!fs.existsSync(target)) {
@@ -195,7 +217,7 @@ export function createSystemTools(config) {
       guard('archiveHandler');
       const ext = path.extname(archivePath).toLowerCase();
       const isZip = ['.zip', '.jar'].includes(ext);
-      const result = isZip
+      const result = isZip && platform !== 'win32'
         ? await run('unzip', ['-Z1', archivePath], { timeoutMs, signal })
         : await run('tar', ['-tf', archivePath], { timeoutMs, signal });
       if (result.code !== 0) {
@@ -210,7 +232,7 @@ export function createSystemTools(config) {
           path: name,
           isDir: name.endsWith('/'),
           size: 0,
-          unsafe: name.startsWith('/') || name.split(/[\\/]/).includes('..'),
+          unsafe: /^[\\/]/.test(name) || /^[a-z]:/i.test(name) || name.split(/[\\/]/).includes('..') || platform === 'win32' && name.includes(':'),
         }));
       // Path-escape members are reported, never extracted (inspect.rs:617).
       return { entries: entries.filter((entry) => !entry.unsafe), rejected: entries.filter((entry) => entry.unsafe).length };
@@ -219,11 +241,16 @@ export function createSystemTools(config) {
     async createZip(paths, destinationDir, name, signal) {
       if (injected.archiveHandler) return injected.archiveHandler({ op: 'create', paths, dest: destinationDir, name });
       guard('archiveHandler');
-      const target = path.join(destinationDir, name.endsWith('.zip') ? name : `${name}.zip`);
+      const target = pathsApi.join(destinationDir, name.endsWith('.zip') ? name : `${name}.zip`);
       if (fs.existsSync(target)) throw new FilePluginError(ErrorCode.CONFLICT, 'archive already exists');
-      let cwd = path.dirname(paths[0]);
-      while (!paths.every((source) => source.startsWith(cwd + path.sep) || cwd === path.parse(cwd).root)) cwd = path.dirname(cwd);
-      const result = await run('zip', ['-r', '-q', target, '--', ...paths.map((source) => path.relative(cwd, source))], { timeoutMs, cwd, signal });
+      const root = pathsApi.parse(paths[0]).root;
+      if (paths.some(source => pathsApi.parse(source).root.toLowerCase() !== root.toLowerCase())) throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'archive inputs must be on the same volume');
+      let cwd = pathsApi.dirname(paths[0]);
+      while (!paths.every(source => { const relative = pathsApi.relative(cwd, source); return relative !== '..' && !relative.startsWith('..' + pathsApi.sep) && !pathsApi.isAbsolute(relative); })) cwd = pathsApi.dirname(cwd);
+      const relative = paths.map(source => pathsApi.relative(cwd, source));
+      const result = platform === 'win32'
+        ? await run('tar', ['-a', '-cf', target, '--', ...relative], { timeoutMs, cwd, signal })
+        : await run('zip', ['-r', '-q', target, '--', ...relative], { timeoutMs, cwd, signal });
       if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'zip creation failed');
       return { path: target, count: paths.length };
     },
@@ -236,7 +263,7 @@ export function createSystemTools(config) {
         throw new FilePluginError(ErrorCode.PATH_DENIED, 'archive contains unsafe members');
       }
       // Detailed mode carries member types. Refuse links/devices before any extraction.
-      const zip = ['.zip', '.jar'].includes(path.extname(archivePath).toLowerCase());
+      const zip = platform !== 'win32' && ['.zip', '.jar'].includes(path.extname(archivePath).toLowerCase());
       const details = await run(zip ? 'unzip' : 'tar', zip ? ['-Z', '-l', archivePath] : ['-tvf', archivePath], { timeoutMs, signal });
       if (details.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'archive inspection failed');
       const modes = details.stdout.split('\n').filter((line) => /^[bcdhlps-][rwxStTs-]{9}/.test(line));
@@ -246,7 +273,7 @@ export function createSystemTools(config) {
       // Existing symlink directories could redirect otherwise harmless members.
       for (const entry of listing.entries) {
         authorizeMember?.(entry.path);
-        const parts = entry.path.split('/').filter(Boolean);
+        const parts = entry.path.split(/[\\/]/).filter(Boolean);
         let current = destinationDir;
         for (const part of parts) {
           current = path.join(current, part);
@@ -257,7 +284,7 @@ export function createSystemTools(config) {
       }
       fs.mkdirSync(destinationDir, { recursive: true });
       const ext = path.extname(archivePath).toLowerCase();
-      const result = ['.zip', '.jar'].includes(ext)
+      const result = platform !== 'win32' && ['.zip', '.jar'].includes(ext)
         ? await run('unzip', ['-n', '-q', archivePath, '-d', destinationDir], { timeoutMs, signal })
         : await run('tar', ['-xkf', archivePath, '-C', destinationDir], { timeoutMs, signal });
       if (result.code !== 0) throw new FilePluginError(ErrorCode.INTERNAL, 'archive extraction failed');

@@ -23,7 +23,7 @@ if (!pkg.files?.includes('cordis.patch.yml')) problems.push('DSH patch is not in
 const patch = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8');
 if (!patch.includes("name: '@dsh/files'")) problems.push('DSH patch must reference the package root for client discovery');
 if (pkg.dsh?.client?.platform !== 'web' || pkg.exports?.['./client'] !== './client.js') problems.push('missing DSH browser entry');
-for (const file of ['client.js', 'web/index.html', 'web/app.js', 'web/api.js', 'web/locale.js', 'web/styles.css', 'web/icon.svg', 'locale/zh.json', 'locale/en.json']) {
+for (const file of ['client.js', 'web/index.html', 'web/app.js', 'web/api.js', 'web/locale.js', 'web/icons.js', 'web/view-state.js', 'web/places-state.js', 'web/sidebar.js', 'web/styles.css', 'web/icon.svg', 'locale/zh.json', 'locale/en.json']) {
   if (!fs.existsSync(path.join(root, file))) problems.push(`missing browser asset: ${file}`);
 }
 for (const entry of ['client.js', 'web/', 'locale/']) if (!pkg.files?.includes(entry)) problems.push(`browser asset excluded from package: ${entry}`);

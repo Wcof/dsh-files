@@ -16,12 +16,14 @@ import {
 } from './adapter.js';
 import { asFilePluginError, httpStatus, safeMessage } from '../protocol/errors.js';
 import { callTool, toDshManifest } from '../tool-definitions.js';
+import { openPagePreview } from '../core/preview.js';
 
 defineAdapter('dsh', (options = {}) => {
   let service;
   let config;
   let log;
   const prefix = options.routePrefix ?? '/agent/files';
+  const rawPath = `${prefix}/raw`;
   const panelId = options.panelId ?? 'universal-files';
   const disposers = [];
   const streams = new Set();
@@ -33,6 +35,7 @@ defineAdapter('dsh', (options = {}) => {
     { method: 'POST', path: `${prefix}/rpc` },
     { method: 'POST', path: `${prefix}/tools/call` },
     { method: 'GET', path: `${prefix}/events` },
+    { method: 'GET', path: rawPath },
   ];
 
   /** Pure dispatcher: usable in tests and by hosts that own their own server. */
@@ -45,6 +48,7 @@ defineAdapter('dsh', (options = {}) => {
     if (!route) return { status: 404, payload: { ok: false, error: 'not found' } };
     if (route.method !== method) return { status: 405, payload: { ok: false, error: 'method not allowed' } };
     if (path === `${prefix}/events`) return { status: 400, payload: { ok: false, error: 'use the HTTP event stream' } };
+    if (path === rawPath) return { status: 400, payload: { ok: false, error: 'use the HTTP preview stream' } };
     if (method === 'GET' && path === `${prefix}/tools`) {
       return { status: 200, payload: toDshManifest(service.tools(), { routePrefix: prefix }) };
     }
@@ -74,6 +78,52 @@ defineAdapter('dsh', (options = {}) => {
       }
     }
     return { status: 200, payload: await service.handle(parsed) };
+  }
+
+  /**
+   * Same-origin, range-capable media stream for the built-in page preview.
+   * The core owns path authorization and file access; this layer only maps
+   * the HTTP request onto byte ranges and response headers.
+   */
+  async function serveRaw(request, response) {
+    if (options.sameOriginOnly !== false && !isSameOrigin(request)) {
+      return jsonReply(response, 403, { ok: false, error: 'same-origin only' });
+    }
+    const url = new URL(request.url ?? rawPath, 'http://127.0.0.1');
+    try {
+      const file = await openPagePreview(service.policy, url.searchParams.get('path'));
+      let start = 0;
+      let end = Math.max(0, file.size - 1);
+      let status = 200;
+      const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers?.range ?? '');
+      if (range) {
+        const first = range[1] ? Number(range[1]) : 0;
+        const last = range[2] ? Number(range[2]) : end;
+        if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first > last || first >= file.size) {
+          response.writeHead(416, { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${file.size}` });
+          return response.end();
+        }
+        start = first; end = Math.min(last, file.size - 1); status = 206;
+      }
+      const headers = {
+        'Content-Type': file.mimeType,
+        'Content-Length': file.size ? end - start + 1 : 0,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+        'Content-Disposition': 'inline',
+        'X-Content-Type-Options': 'nosniff',
+      };
+      if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${file.size}`;
+      response.writeHead(status, headers);
+      if (request.method === 'HEAD' || !file.size) return response.end();
+      const stream = file.read(start, end);
+      stream.on('error', () => response.destroy());
+      response.on('close', () => stream.destroy());
+      stream.pipe(response);
+    } catch (error) {
+      if (response.headersSent) return response.destroy();
+      jsonReply(response, httpStatus(error), { ok: false, error: safeMessage(asFilePluginError(error), config?.security) });
+    }
   }
 
   async function subscribe(request, response) {
@@ -146,6 +196,10 @@ defineAdapter('dsh', (options = {}) => {
           path: route.path,
           handler: async (request, response) => {
             try {
+              if (route.path === rawPath) {
+                if (!['GET', 'HEAD'].includes(request.method)) return jsonReply(response, 405, { ok: false, error: 'method not allowed' });
+                return await serveRaw(request, response);
+              }
               if (route.path === `${prefix}/events` && request.method === 'GET') return await subscribe(request, response);
               const body = request.method === 'POST' ? await readRequestBody(request) : undefined;
               const url = new URL(request.url ?? route.path, 'http://127.0.0.1');

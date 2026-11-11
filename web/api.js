@@ -48,6 +48,11 @@ export function previewBlob(result) {
   return new Blob([Uint8Array.from(raw, char => char.charCodeAt(0))], { type: result.mimeType });
 }
 
+/** Whole-file, same-origin media URL used by the built-in page preview. */
+export function rawPreviewUrl(path) {
+  return `${API}/raw?path=${encodeURIComponent(path)}`;
+}
+
 export async function upload(file, parent, limits, signal, progress) {
   if (file.size > limits.maxImportBytes) throw new Error('File exceeds the upload limit');
   const uploadId = `upload-${crypto.randomUUID()}`;
@@ -83,9 +88,4 @@ export function formatBytes(value) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[index]}`;
 }
 
-export function parentOf(value) {
-  const trimmed = value.replace(/[/\\]+$/, '');
-  const index = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  if (index < 0) return value;
-  return trimmed.slice(0, index) || '/';
-}
+export { parentPath as parentOf } from './view-state.js';

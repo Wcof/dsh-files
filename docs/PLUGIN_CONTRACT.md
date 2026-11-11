@@ -1,4 +1,4 @@
-# 插件契约 · @dsh/files v0.2.0
+# 插件契约 · @dsh/files v0.2.1
 
 > 本文是插件的正式契约：边界、对外接口、输入输出、依赖项、配置项。
 > 命令级行为对照见 [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md)，智能体接入见
@@ -13,7 +13,7 @@
 把「一套完整的文件能力」以宿主无关的方式提供给任意智能体宿主：
 
 - 目录浏览 / 元信息 / 磁盘占用 / 快速访问根
-- 文本读取、图片 / PDF / 音视频有界预览
+- 文本读取、图片 / PDF / 音视频有界预览（工具）；文件页面另用同源整文件流做无上限内置预览
 - 名称与内容搜索、全局定位
 - 创建、原子写（乐观锁）、重命名、复制、移动、复制副本、批量、回收站
 - 归档列表 / 创建 / 安全解包
@@ -139,7 +139,7 @@ interface Backend {
 - 命令表中的必填项和 `copy/move` 的成对路径在后端调用前验证；`params:null` 拒绝。
 - `uploadId` 为 1..128 个英文字母、数字、下划线或短横线，不能包含路径分隔符。
 - 字符串参数 ≤ 4 MiB；`import_chunk.data` ≤ 700000 字符；`paths` 为 1..200 项、每项 ≤ 4096 字符；
-  `limit` 1..2000；`offset` ≤ 100000；`sortBy` ∈ `name|size|mtime`；`sortDir` ∈ `asc|desc`；
+  `limit` 1..2000；`offset` ≤ 100000；`sortBy` ∈ `name|size|mtime|kind`；`sortDir` ∈ `asc|desc`；
   `conflict` ∈ `rename|skip`；`expectedMtime` 必须是有限数；布尔参数必须真是布尔值。
 
 ### 3.2 返回类型（完整声明见 `src/protocol/types.d.ts`）
@@ -197,12 +197,12 @@ wire 的 `error` 恒为**字符串**；内部使用结构化 `FilePluginError { 
 
 | 命令 | 用途 | 注入钩子 |
 |---|---|---|
-| `zip` / `unzip` / `tar` | 归档创建、列表、安全解包 | `archiveHandler` |
-| `open` / `xdg-open` / `cmd` | 打开 / 编辑器 / 在访达中显示 / 打开回收站 | `openHandler`, `openTrashHandler` |
+| macOS/Linux `zip` / `unzip` / `tar`；Windows `tar` | 归档创建、列表、安全解包 | `archiveHandler` |
+| `open` / `xdg-open` / Windows `powershell.exe` | 打开 / 编辑器 / 在访达中显示 / 打开回收站 | `openHandler`, `openTrashHandler` |
 | `pbcopy` / `osascript` / `wl-copy` | 路径 / 图片剪贴板 | `clipboardHandler` |
 | `mdfind` | 全局定位加速 | `locateHandler` |
 | `pdftotext` | PDF 内容搜索 | `pdfTextHandler` |
-| 平台回收站目录 | `trash`（移动，非删除） | `trashHandler` |
+| macOS/XDG 回收站目录；Windows PowerShell + .NET 系统回收站 | `trash`（移动，非删除） | `trashHandler` |
 
 `security.allowSystemCommands = false` 且未注入对应钩子时，命令返回可读的
 `CAPABILITY_UNAVAILABLE`，不会静默降级也不会偷偷执行。
@@ -305,7 +305,9 @@ createFilePlugin() -> backend.init() -> attach()/start() -> 调用 -> dispose()
 3. **OS 能力显式化**：默认可用但可整体关闭；关闭后不执行任何外部命令，返回明确错误。
 4. **归档安全**：拒绝绝对路径 / `..` 成员、链接与设备成员、目标路径中的符号链接；逐成员 WRITE 授权。命令输出超限失败，不使用截断清单。解包不覆盖已有文件（`-n` / `-xk`），不提供磁盘配额或解压体积沙箱。
 5. **有界性**：读取、预览、搜索、磁盘统计、批量、导入、监听事件全部有硬上限，
-   避免单个智能体请求拖垮宿主。
+   避免单个智能体请求拖垮宿主。文件页面的 `/agent/files/raw` 不是工具输出：它由浏览器按 `Range`
+   自行拉取，走同一 `PREVIEW` 授权且限定媒体类型、同源、`nosniff`；工具侧 `*_preview` 的
+   `maxPreviewBytes` 上限保持不变。
 6. **错误脱敏**：内部错误不泄漏路径；wire `error` 恒为字符串。
 7. **不主动外发**：插件不发起任何对外网络请求；唯一网络行为是可选兼容后端对宿主指定 endpoint 的调用。
 
@@ -334,3 +336,15 @@ npm run check        # 测试 + 命令表 / 工具目录 / 文档 / 版本一致
 npm run check:dsh-runtime -- /absolute/path/to/dsh/node_modules
 node bin/cli.mjs describe
 ```
+
+## 文件管理页面展示契约
+
+页面提供图标／列表、三档尺寸、四种排序和可收起预览。`web/view-state.js` 统一展示偏好、Windows 盘符／UNC 与 POSIX 导航、系统快捷键与选择规则；只持久化视图、尺寸、排序、预览开关和主题。动态名称与路径用 DOM 文本显示。未保存文本切换选择或关闭预览必须确认；取消保持草稿，条件保存继续使用 `expectedMtime`。预览区关闭是纯界面操作，不受进行中的文件操作阻塞；右键菜单按文件类型生成，直接调用与工具栏共享的动作表，并兼容只派发 `pointerup` 的宿主。
+
+本地后端的 `backendCapabilities.platform` 返回宿主平台，页面据此采用 Cmd／Ctrl、重命名和回收站文案。`search`／`locate` 可选 `sortBy`、`sortDir`；提供排序键时在有界候选集合中先排序再分页，不提供时保持相关度排序。Windows 创建名称拒绝保留设备名、流分隔符和尾点／尾空格；回收站失败返回错误，不降级为永久删除。Windows 跨盘路径压缩明确拒绝。
+
+### 侧栏收藏位置
+
+`web/sidebar.js` 管理收藏交互，`web/places-state.js` 管理独立的收藏存储。首用以宿主 roots 为初始收藏，后续完全按用户保存的列表展示，不按访问频率推断、不重新追加已移除的默认项。最多 64 项，别名不超过 80 个字符；新增或编辑先调用既有 `list_dir` 验证目录类型、可读性和授权，并使用返回的规范路径去重。打开收藏仍由文件 API 重新授权。
+
+本地存储键按平台和配置的个人目录隔离；只记录用户主动收藏的路径、默认根引用、别名与顺序，不保存文件内容或访问历史。损坏／不可用存储使用初始列表，写入失败明确提示只在当前页面生效；空列表是有效设置。Windows 路径去重忽略大小写和分隔符差异。拖拽只在释放于侧栏时提交，取消、失焦、指针取消或页面退出清理捕获、计时器和滚动帧，不改变列表。收藏管理在只读模式下可用，不改动文件系统。

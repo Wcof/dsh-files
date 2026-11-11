@@ -34,9 +34,14 @@ export class AuthorizedPath {
 }
 
 function isWithin(candidate, root) {
+  if (process.platform === 'win32') { candidate = candidate.toLowerCase(); root = root.toLowerCase(); }
   if (candidate === root) return true;
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
   return candidate.startsWith(prefix);
+}
+
+export function validWindowsName(name) {
+  return !/[<>:"|?*\x00-\x1f]/.test(name) && !/[. ]$/.test(name) && !/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name);
 }
 
 function canonicalOrSelf(target) {
@@ -84,7 +89,7 @@ export class AccessPolicy {
     this.config = config;
     this.home = canonicalOrSelf(path.resolve(config.homeDir));
     this.temp = canonicalOrSelf(path.resolve(config.tempDir));
-    this.systemTmpPrefixes = ['/tmp', '/private/tmp', '/var/folders'].filter((prefix) =>
+    this.systemTmpPrefixes = (process.platform === 'win32' ? [] : ['/tmp', '/private/tmp', '/var/folders']).filter((prefix) =>
       path.isAbsolute(prefix)
     );
     this.allowedRoots = [
@@ -100,7 +105,7 @@ export class AccessPolicy {
   /** Expand `~` and `~/...` using the *configured* home, not os.homedir(). */
   expandTilde(raw) {
     if (raw === '~') return this.config.homeDir;
-    if (raw.startsWith('~/')) return path.join(this.config.homeDir, raw.slice(2));
+    if (raw.startsWith('~/') || process.platform === 'win32' && raw.startsWith('~\\')) return path.join(this.config.homeDir, raw.slice(2));
     return raw;
   }
 
@@ -131,8 +136,9 @@ export class AccessPolicy {
     }
 
     for (const blocked of this.config.deniedNames) {
-      const parts = blocked.split('/');
-      if (canon.endsWith(path.sep + parts.join(path.sep)) || canon.includes(path.sep + parts.join(path.sep) + path.sep)) {
+      const compare = process.platform === 'win32' ? canon.toLowerCase() : canon;
+      const parts = (process.platform === 'win32' ? blocked.toLowerCase() : blocked).split('/');
+      if (compare.endsWith(path.sep + parts.join(path.sep)) || compare.includes(path.sep + parts.join(path.sep) + path.sep)) {
         throw new FilePluginError(ErrorCode.PATH_DENIED, `access denied: ${blocked}`);
       }
     }
@@ -172,7 +178,8 @@ export class AccessPolicy {
       name !== '..' &&
       !name.includes('/') &&
       !name.includes('\\') &&
-      !name.includes('\0')
+      !name.includes('\0') &&
+      (process.platform !== 'win32' || validWindowsName(name))
     );
   }
 

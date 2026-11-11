@@ -61,7 +61,7 @@ await plugin.attach(adapter);
 **不再 iframe 任何 Natives 页面**，不依赖 8770 / `~/.natives` / 产品主题 / 签名嵌入。
 安装组合包时，包根 `@dsh/files` 的 `apply(ctx, config)` 向 `ctx.tools` 注册 25 个原生工具。
 每个定义包含 `parameters`、`output.schema/render` 和 `execute`，调用复用共享服务并传递取消信号。
-`tools` 是必需注入；`webServer` 可选，存在时注册 5 条同源 API 路由和 `/dsh-files/` 静态页面。卸载时释放工具、路由、事件流及内核资源。
+`tools` 是必需注入；`webServer` 可选，存在时注册 6 条同源 API 路由和 `/dsh-files/` 静态页面。卸载时释放工具、路由、事件流及内核资源。
 包声明 `dsh.client`，`client.js` 用宿主 React 和插槽服务注册左侧「文件」及对应主面板，主面板嵌入本包页面。patch 插件行必须使用包根，DSH 浏览器发现会忽略子路径。页面无独立服务和运行时依赖。
 
 ```js
@@ -84,10 +84,13 @@ const handle = await plugin.attach({
 | `/agent/files/rpc` | POST | `{id, method, params}` | 原 wire 响应 |
 | `/agent/files/tools/call` | POST | `{name:'file_list_dir', arguments:{...}}` | `{ok, result}` |
 | `/agent/files/events` | GET | 同源 EventSource 请求；可选 `path` 指定监听目录 | SSE：`changed`、`fs_changed`、`progress`、`error` |
+| `/agent/files/raw` | GET / HEAD | `path` 查询参数；可选 `Range` | 页面内置预览的整文件字节流（200 / 206），不是 wire 命令 |
 | `/dsh-files/` | GET / HEAD | 无 | 本包文件管理页面；仅组合包入口注册 |
 
+`/agent/files/raw` 只供随包页面加载图片、PDF、音视频，避免把有界 base64 工具结果当成页面预览上限。它复用 `core/preview.js` 的 `Operation.PREVIEW` 授权，仅接受 image / pdf / audio / video 且排除 SVG，固定 `Content-Type`、`nosniff` 与 `inline`，不新增 wire 命令，也不向智能体工具目录暴露。DSH 适配器只做 `Range` 解析和响应头映射，文件访问仍由 `src/core/` 完成；没有该路由的旧宿主由页面自动回退到 `*_preview` 有界命令。
+
 事件流最多 32 个连接，15 秒发送心跳；慢消费者超过写缓冲后关闭连接，由宿主重连并刷新目录。
-带 `path` 的事件流拥有独立监听订阅，断开时释放；同目录其他页面或工具持有的监听不会被停止。静态页只允许固定资产白名单，不将用户文件路径映射为静态 URL。
+带 `path` 的事件流拥有独立监听订阅，断开时释放；同目录其他页面或工具持有的监听不会被停止。静态页只允许固定资产白名单，不将用户文件路径映射为静态 URL。公开 HTML 允许从外部链接顶层导航进入；文件 API 与静态脚本仍拒绝跨站请求。
 `fs_changed` 保留 `kind/path/count`，新增 `directory/changes/overflow`；界面应遍历 `changes`，
 `overflow:true` 时重新读取目录。事件不持久化，也不代表完整的文件修改历史。
 
@@ -104,7 +107,7 @@ NDJSON over stdio（一行一个 JSON），响应沿用原 wire envelope `{id, o
 
 ```jsonc
 {"id":"1","method":"initialize","params":{"client":"zcode"}}
-{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.2.0","backend":"local","tools":25}}
+{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.2.1","backend":"local","tools":25}}
 
 {"id":"2","method":"tools/list"}
 {"id":"2","ok":true,"result":{"tools":[...]}}

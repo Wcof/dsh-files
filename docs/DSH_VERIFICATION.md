@@ -26,12 +26,14 @@ REA 静态记录：`ev_e01511af82e6d4919feb354389514e40fb2df8c0fa94e8e6e18b85b70
 ## 页面验证方法
 
 使用真实 DSH WebServer 与文件插件，绑定回环端口并将 `homeDir`、`stateDir` 指向隔离测试目录。浏览器覆盖目录导航、文本保存、外部修改冲突、离开草稿确认、新建、重命名、复制粘贴、Unicode 上传与取消、内容搜索、隐藏文件和图片预览。保存、冲突、上传和废纸篓结果再与磁盘内容对比。
-废纸篓与系统打开使用测试处理器；只读配置用独立实例确认按钮禁用与文本仍可预览。桌面和窄窗口分别检查布局，中英文和控制台错误一起核对。PDF 需要浏览器原生查看器；当前验证浏览器不支持内嵌显示，已验证明确失败提示与系统打开入口，不将其记录为 PDF 渲染成功。
+废纸篓与系统打开使用测试处理器；只读配置用独立实例确认按钮禁用与文本仍可预览。桌面和窄窗口分别检查布局，中英文和控制台错误一起核对。侧栏收藏验证覆盖添加、别名／路径编辑、默认项移除、刷新持久化、拖拽／键盘排序、无效／重复／受限目录、取消及只读模式。Finder 页面另覆盖列表／图标、三档尺寸、排序、多选、方向键、右键菜单、预览开关与展示偏好；Windows 路径、快捷键映射与系统命令通过隔离测试检查，不能替代 Windows APP 实机验证。PDF 需要浏览器原生查看器；当前验证浏览器不支持内嵌显示，已验证明确失败提示与系统打开入口，不将其记录为 PDF 渲染成功。
 
 ## 一手参考
 
 - [DSH 组合包安装文档](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/user/develop/basic/publish.md)：`dsh.bundle.patch`、安装后 profile 组合、本地目录与 GitHub 安装。
 - [DSH 工具契约](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/subsystems/tools.zh.md)：原生注册需要 `parameters`、`output` 和 `execute`，并传递取消信号。
+- [Fanbox 展示偏好与文件列表](https://github.com/alchaincyf/fanbox/blob/2ec28c6d3336638e90b11c347162c20d1cb2d4ff/public/app.js)：参考视图、尺寸、排序偏好及有界文件列表，不复制视觉代码。
+- 本地 Natives 的 `extension/files-entries-renderer.js`、`files-preferences.js`、`files-shortcuts.js`：参考选择、导航与偏好行为，不增加模块或数据依赖。
 - [Fanbox 功能说明](https://github.com/alchaincyf/fanbox/blob/2ec28c6d3336638e90b11c347162c20d1cb2d4ff/README.md)：文件检索、预览、安全编辑与实时文件变化。
 - [Fanbox 事件合并](https://github.com/alchaincyf/fanbox/blob/2ec28c6d3336638e90b11c347162c20d1cb2d4ff/lib/watch-batcher.js)：借鉴“按文件合并、有界批次、溢出刷新目录”的行为，独立实现现有事件契约。
 - [Fanbox 安全编辑](https://github.com/alchaincyf/fanbox/blob/2ec28c6d3336638e90b11c347162c20d1cb2d4ff/server.js#L421)：借鉴外部删除应视为编辑冲突的处理。

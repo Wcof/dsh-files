@@ -5,6 +5,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { FilePluginError, ErrorCode } from '../protocol/errors.js';
 import { Operation } from './access-policy.js';
@@ -78,5 +79,35 @@ export async function readBinaryPreview(policy, rawPath, expectedKind, config) {
     mimeType: mimeTypeFor(kind, path.basename(canon)),
     size: info.size,
     mtime: info.mtimeMs,
+  };
+}
+
+const PAGE_PREVIEW_KINDS = new Set(['image', 'pdf', 'audio', 'video']);
+
+/**
+ * Open a whole-file, same-origin preview stream for the bundled file page.
+ *
+ * `readBinaryPreview()` is a bounded base64 tool result; it cannot render a
+ * photo, PDF or video larger than `limits.maxPreviewBytes`. The page instead
+ * loads media from a same-origin GET URL so the browser can request only the
+ * byte ranges it needs. Authorization is identical to the preview commands.
+ * SVG is excluded because it may contain script when loaded as a document;
+ * the page falls back to the base64 blob for that type.
+ */
+export async function openPagePreview(policy, rawPath) {
+  const handle = policy.authorize(rawPath, Operation.PREVIEW);
+  const canon = handle.path;
+  const kind = detectFileKind(canon);
+  if (!PAGE_PREVIEW_KINDS.has(kind) || path.extname(canon).toLowerCase() === '.svg') {
+    throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'unsupported preview kind');
+  }
+  const info = await fsp.stat(canon);
+  if (!info.isFile()) throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'not a regular file');
+  return {
+    size: info.size,
+    mimeType: mimeTypeFor(kind, path.basename(canon)),
+    read(start, end) {
+      return createReadStream(canon, { start, end });
+    },
   };
 }

@@ -98,8 +98,9 @@ export function validateRequest(request, config) {
     const value = params.expectedMtime;
     if (typeof value !== 'number' || !Number.isFinite(value)) invalid('expectedMtime must be a finite number');
   }
-  if ('sortBy' in params && !['name', 'size', 'mtime'].includes(params.sortBy)) invalid('invalid sortBy');
-  if ('sortDir' in params && !['asc', 'desc'].includes(params.sortDir)) invalid('invalid sortDir');
+  for (const key of ['sortBy', 'sortDir']) {
+    if (key in params && !command.schema[key].enum.includes(params[key])) invalid(`invalid ${key}`);
+  }
   if ('conflict' in params && !['rename', 'skip'].includes(params.conflict)) {
     invalid('invalid import conflict policy');
   }

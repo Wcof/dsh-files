@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { Operation } from './access-policy.js';
 import { detectFileKind, naturalCompare } from './detect.js';
-import { defaultRoots } from './entries.js';
+import { defaultRoots, sortEntries } from './entries.js';
 import { FilePluginError, ErrorCode } from '../protocol/errors.js';
 
 export function fuzzyNameScore(name, query) {
@@ -115,7 +115,8 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
           /* unauthorized, vanished or unreadable: skip */
         }
       }
-      found.sort((a, b) => (b.searchScore ?? 0) - (a.searchScore ?? 0) || naturalCompare(a.name, b.name));
+      if (params.sortBy) sortEntries(found, params);
+      else found.sort((a, b) => (b.searchScore ?? 0) - (a.searchScore ?? 0) || naturalCompare(a.name, b.name));
       return {
         entries: found.slice(offset, offset + limit),
         hasMore: offset + limit < found.length,
@@ -196,7 +197,8 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
     }
   }
 
-  found.sort(
+  if (params.sortBy) sortEntries(found, params);
+  else found.sort(
     (a, b) => (b.searchScore ?? 0) - (a.searchScore ?? 0) || naturalCompare(a.name, b.name)
   );
   const page = found.slice(offset, offset + limit);

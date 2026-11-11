@@ -8,7 +8,7 @@
 - `src/core/` 管理文件操作、授权和资源；不得读取宿主服务。
 - `src/adapters/` 只翻译传输与宿主契约，不能复制文件操作逻辑。
 - `src/dsh-plugin.js` 是 Cordis 加载入口，根导出同时保留 JS API 并暴露 Cordis 生命周期；patch 必须引用包根，DSH 浏览器模块发现会忽略子路径。
-- `client.js` 仅注册 DSH 侧栏与主面板；`web/` 是直接随包分发的原生 HTML/CSS/ESM 页面，不需要构建；`src/adapters/dsh-web.js` 只提供固定静态资产。页面文件操作统一经过现有同源 API，不访问宿主私有数据。
+- `client.js` 仅注册 DSH 侧栏与主面板；`web/` 是直接随包分发的原生 HTML/CSS/ESM 页面，不需要构建；`src/adapters/dsh-web.js` 只提供固定静态资产。页面文件操作统一经过现有同源 API，不访问宿主私有数据。`web/view-state.js` 集中管理展示偏好、选择、平台快捷键和路径导航；`web/icons.js` 只生成受控图标。展示偏好不持久化路径与内容；用户主动收藏的目录路径、别名和顺序由 `web/places-state.js` 单独保存在当前来源的浏览器存储，按宿主平台和个人目录隔离，不保存文件内容或访问历史。
 - `locale/` 保存双语插件展示元数据；`web/locale.js` 保存页面文案。页面动态内容用 DOM 文本写入，文本编辑保留 mtime 条件、截断文件不得保存。
 - `test/` 使用 Node 内置测试，临时文件和系统命令必须隔离，不操作真实用户文件。
 - `scripts/` 保存契约和真实宿主验证入口；外部源码、提取运行时和诊断日志放 `.tmp/<task>/`，不得成为运行依赖。
