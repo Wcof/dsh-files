@@ -4,10 +4,11 @@
 
 ## 进行中
 
-- 真实 DSH `0.2.2-rc.1` 运行时检查因页面资产清单变化需要按 `docs/DSH_VERIFICATION.md` 重跑；Windows APP 实机验证尚未进行；浏览器上传／取消实操受 Chrome 扩展文件权限限制，自动化上传与取消回归已通过。`0.2.2` 尚未推送 GitHub、未进入 PlugBox 精选索引，发布后需按文档复核线上索引与收录。
+- 真实 DSH `0.2.2-rc.1` 运行时检查因页面资产清单变化需要按 `docs/DSH_VERIFICATION.md` 重跑；Windows APP 实机验证尚未进行；浏览器上传／取消实操受 Chrome 扩展文件权限限制，自动化上传与取消回归已通过。`0.2.2` 已推送 GitHub main，PlugBox 精选索引仍固定在 `0.2.0` 提交，需按本版本提交 hash 更新收录并用真实 DSH 市场服务复核线上索引。
 
 ## 最近完成
 
+- 2026-11-14 13:02：`0.2.2` 推送到 [Wcof/dsh-files](https://github.com/Wcof/dsh-files) main（代码提交 `8e0235c`、推送记录提交随后），远端 main 与本地一致。PlugBox 收录与线上索引复核待办。
 - 2026-11-14 12:55：版本 `0.2.2` 本地提交（未推送）。`package.json` 与 `PLUGIN_VERSION` 同步 bump 到 `0.2.2`，`docs/PLUGIN_CONTRACT.md`、`docs/CAPABILITY_MATRIX.md`、`docs/AGENT_ADAPTERS.md` 示例与 README 版本历史同步更新；把工作区两批页面能力补齐（Fanbox 基准补齐 + 文件管理器核心交互缺口）连同文档与测试一并提交。提交前 `npm run check` 122 项通过（43 命令／25 工具契约一致），`git diff --check` 通过。
 
 - 2026-11-14 12:24：补齐文件管理器核心交互缺口（施工清单见 [goals/20261114-1210-mature-file-manager.md](goals/20261114-1210-mature-file-manager.md)）。列表内拖拽移动／复制到文件夹（Alt／⌥ 复制、目标高亮、拖入自身子树拒绝、外部文件拖入上传按 `dataTransfer` 类型区分、移动后同步应用剪贴板）；状态栏多选汇总（文件夹不计字节）；「打开废纸篓」入口接通 `open_trash`；长列表滚动到底自动加载下一页；新建与上传完成后滚动并选中新条目；预览元数据补创建时间。`view-state.js` 新增 `pathsForDrop` 与 `selectionSummary` 纯函数并各配单测；页面桩测试同步补 `formatBytes`／新函数注入，`system()` 改为全链可选链防御。修复拖拽处理链 double-parse 导致移动静默失败的问题。`npm run check` 122 项通过（43 命令／25 工具契约一致）；隔离回环服务 + 真实 Chromium 回归覆盖拖拽移动／复制、自动加载（200→295）、废纸篓入口、汇总、创建时间、新建后选中。未提交、未发布。
