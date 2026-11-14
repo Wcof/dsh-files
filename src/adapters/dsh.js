@@ -14,9 +14,58 @@ import {
   readRequestBody,
   isSameOrigin,
 } from './adapter.js';
-import { asFilePluginError, httpStatus, safeMessage } from '../protocol/errors.js';
+import fsp from 'node:fs/promises';
+import { FilePluginError, ErrorCode, asFilePluginError, httpStatus, safeMessage } from '../protocol/errors.js';
 import { callTool, toDshManifest } from '../tool-definitions.js';
 import { openPagePreview } from '../core/preview.js';
+
+/**
+ * HTML previews are served with a `CSP: sandbox` header so the document always
+ * runs in an opaque origin — script can execute (a "live" preview) but cannot
+ * reach the same-origin file API, and even a direct top-level navigation stays
+ * sandboxed. The injected bootstrap only rewrites relative `src` targets to
+ * the raw route so local images resolve; it never touches the document HTML.
+ */
+const HTML_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-modals allow-popups";
+const MAX_HTML_PREVIEW_BYTES = 4 * 1024 * 1024;
+
+function previewBootstrap(directory) {
+  const base = JSON.stringify(directory.replaceAll('\\', '/'));
+  return `<script data-dsh-preview>(function(){
+  var base=${base};
+  function resolve(src){
+    if(/^(https?:|data:|blob:)/i.test(src))return null;
+    if(/^[a-z]:[\\\\/]/i.test(src)||src.startsWith('//'))return src.replaceAll('\\\\','/');
+    var parts=base.split('/');
+    for(var seg of src.split('/')){
+      if(!seg||seg==='.')continue;
+      if(seg==='..')parts.pop();else parts.push(seg);
+    }
+    return parts.join('/');
+  }
+  function fix(el){
+    var src=el.getAttribute('src')||'';
+    if(!src||el.dataset.dshFix)return;
+    var target=resolve(src);
+    if(target===null)return;
+    el.dataset.dshFix='1';
+    el.src='/agent/files/raw?path='+encodeURIComponent(target);
+  }
+  function scan(){document.querySelectorAll('img[src],source[src],video[src],audio[src]').forEach(fix);}
+  document.addEventListener('error',function(event){var node=event.target;if(node&&node.tagName==='IMG')fix(node);},true);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',scan);else scan();
+})()</script>`;
+}
+
+function injectPreviewBootstrap(html, directory) {
+  if (html.includes('data-dsh-preview')) return html;
+  const bootstrap = previewBootstrap(directory);
+  const head = /<head[^>]*>/i.exec(html);
+  if (head) return `${html.slice(0, head.index + head[0].length)}${bootstrap}${html.slice(head.index + head[0].length)}`;
+  const htmlTag = /<html[^>]*>/i.exec(html);
+  if (htmlTag) return `${html.slice(0, htmlTag.index + htmlTag[0].length)}${bootstrap}${html.slice(htmlTag.index + htmlTag[0].length)}`;
+  return `${bootstrap}\n${html}`;
+}
 
 defineAdapter('dsh', (options = {}) => {
   let service;
@@ -92,6 +141,7 @@ defineAdapter('dsh', (options = {}) => {
     const url = new URL(request.url ?? rawPath, 'http://127.0.0.1');
     try {
       const file = await openPagePreview(service.policy, url.searchParams.get('path'));
+      if (file.html) return serveHtmlPreview(request, response, file);
       let start = 0;
       let end = Math.max(0, file.size - 1);
       let status = 200;
@@ -124,6 +174,39 @@ defineAdapter('dsh', (options = {}) => {
       if (response.headersSent) return response.destroy();
       jsonReply(response, httpStatus(error), { ok: false, error: safeMessage(asFilePluginError(error), config?.security) });
     }
+  }
+
+  /**
+   * HTML pages cannot be streamed byte-identical: the sandboxing CSP header is
+   * added and the file is read whole (bounded) to inject the image-fixing
+   * bootstrap. Range requests are answered with the full document.
+   */
+  async function serveHtmlPreview(request, response, file) {
+    if (file.size > MAX_HTML_PREVIEW_BYTES) {
+      const tooLarge = new FilePluginError(ErrorCode.INVALID_PARAMETER, 'HTML preview is limited to 4 MiB; open the file in the default app');
+      return jsonReply(response, httpStatus(tooLarge), { ok: false, error: safeMessage(tooLarge, config?.security) });
+    }
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      const stream = file.read(0, Math.max(0, file.size - 1));
+      stream.on('data', chunk => chunks.push(chunk));
+      stream.on('error', reject);
+      stream.on('end', resolve);
+      response.on('close', () => stream.destroy());
+    });
+    // searchParams values are already percent-decoded once.
+    const target = new URL(request.url ?? rawPath, 'http://127.0.0.1').searchParams.get('path') ?? '';
+    const directory = target.replaceAll('\\', '/').split('/').slice(0, -1).join('/');
+    const body = injectPreviewBootstrap(Buffer.concat(chunks).toString('utf8'), directory);
+    response.writeHead(200, {
+      'Content-Type': file.mimeType,
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
+      'Content-Disposition': 'inline',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': HTML_SANDBOX_CSP,
+    });
+    response.end(request.method === 'HEAD' ? undefined : body);
   }
 
   async function subscribe(request, response) {

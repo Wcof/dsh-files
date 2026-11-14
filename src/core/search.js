@@ -85,6 +85,7 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
       candidates = null;
     }
     if (Array.isArray(candidates) && candidates.length > 0) {
+      let accepted = 0;
       for (const raw of candidates) {
         if (ctx.signal?.aborted) throw new FilePluginError(ErrorCode.CANCELLED, 'operation cancelled');
         if (found.length >= maxResults) {
@@ -111,18 +112,24 @@ export async function runSearch(policy, params, config, ctx, helpers = {}) {
             matchLines: [],
             searchScore: fuzzyNameScore(path.basename(full), query),
           });
+          accepted += 1;
         } catch {
           /* unauthorized, vanished or unreadable: skip */
         }
       }
-      if (params.sortBy) sortEntries(found, params);
-      else found.sort((a, b) => (b.searchScore ?? 0) - (a.searchScore ?? 0) || naturalCompare(a.name, b.name));
-      return {
-        entries: found.slice(offset, offset + limit),
-        hasMore: offset + limit < found.length,
-        truncated,
-        contentUnavailable: false,
-      };
+      // Spotlight indexes the whole disk while the policy is root-scoped: when
+      // no candidate survives authorization, fall back to the bounded
+      // traversal instead of reporting an empty search.
+      if (accepted > 0) {
+        if (params.sortBy) sortEntries(found, params);
+        else found.sort((a, b) => (b.searchScore ?? 0) - (a.searchScore ?? 0) || naturalCompare(a.name, b.name));
+        return {
+          entries: found.slice(offset, offset + limit),
+          hasMore: offset + limit < found.length,
+          truncated,
+          contentUnavailable: false,
+        };
+      }
     }
   }
 

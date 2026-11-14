@@ -83,6 +83,7 @@ export async function readBinaryPreview(policy, rawPath, expectedKind, config) {
 }
 
 const PAGE_PREVIEW_KINDS = new Set(['image', 'pdf', 'audio', 'video']);
+const HTML_EXTS = new Set(['.html', '.htm']);
 
 /**
  * Open a whole-file, same-origin preview stream for the bundled file page.
@@ -93,16 +94,24 @@ const PAGE_PREVIEW_KINDS = new Set(['image', 'pdf', 'audio', 'video']);
  * byte ranges it needs. Authorization is identical to the preview commands.
  * SVG is excluded because it may contain script when loaded as a document;
  * the page falls back to the base64 blob for that type.
+ *
+ * HTML pages are served as `text/html` with a `CSP: sandbox` response header
+ * (see the DSH adapter), so the document runs in an opaque origin that cannot
+ * reach the same-origin file API — including on direct top-level navigation.
  */
 export async function openPagePreview(policy, rawPath) {
   const handle = policy.authorize(rawPath, Operation.PREVIEW);
   const canon = handle.path;
   const kind = detectFileKind(canon);
-  if (!PAGE_PREVIEW_KINDS.has(kind) || path.extname(canon).toLowerCase() === '.svg') {
+  const ext = path.extname(canon).toLowerCase();
+  if (kind === 'text' && HTML_EXTS.has(ext)) {
+    const info = await statRegular(canon);
+    return { size: info.size, mimeType: 'text/html; charset=utf-8', html: true, read(start, end) { return createReadStream(canon, { start, end }); } };
+  }
+  if (!PAGE_PREVIEW_KINDS.has(kind) || ext === '.svg') {
     throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'unsupported preview kind');
   }
-  const info = await fsp.stat(canon);
-  if (!info.isFile()) throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'not a regular file');
+  const info = await statRegular(canon);
   return {
     size: info.size,
     mimeType: mimeTypeFor(kind, path.basename(canon)),
@@ -110,4 +119,10 @@ export async function openPagePreview(policy, rawPath) {
       return createReadStream(canon, { start, end });
     },
   };
+}
+
+async function statRegular(target) {
+  const info = await fsp.stat(target);
+  if (!info.isFile()) throw new FilePluginError(ErrorCode.INVALID_PARAMETER, 'not a regular file');
+  return info;
 }

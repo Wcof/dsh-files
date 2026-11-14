@@ -28,6 +28,25 @@ export function icon(name, size = 20) {
   for (const [key, value] of Object.entries({ viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(key, value);
   shape(svg, 'path', { d: paths[name] ?? paths.file }); return svg;
 }
+/**
+ * Fanbox-style "strong" icon colouring: a per-extension colour table so each
+ * file family reads at a glance (PDF red, JS yellow, MD blue…), rendered as a
+ * solid label chip. Unknown extensions keep the neutral grey label.
+ */
+const EXTENSION_COLORS = {
+  js: '#c9971c', mjs: '#c9971c', cjs: '#c9971c', jsx: '#1f9ecf',
+  ts: '#2f6fc9', tsx: '#2f6fc9', json: '#a6824c', jsonc: '#a6824c', json5: '#a6824c',
+  md: '#3b82f6', markdown: '#3b82f6', mdx: '#3b82f6',
+  html: '#e8662a', htm: '#e8662a', css: '#2d6fd6', scss: '#cf649a', sass: '#cf649a', less: '#2d5b8a',
+  yml: '#9c5bd6', yaml: '#9c5bd6', toml: '#9c5bd6', xml: '#5e8a3e', svg: '#e8923a',
+  csv: '#1fae5a', tsv: '#1fae5a', sql: '#c77d2e',
+  py: '#3776ab', go: '#0095b6', rs: '#c96f2e', java: '#e7700e', kt: '#8a63e8',
+  rb: '#cc342d', php: '#7a86b8', c: '#5c6bc0', cpp: '#5c6bc0', h: '#5c6bc0', hpp: '#5c6bc0',
+  swift: '#f05138', dart: '#0a9edc', vue: '#41b883', sh: '#4a5568', bash: '#4a5568', zsh: '#4a5568', ps1: '#4a5568',
+  txt: '#7a8290', log: '#7a8290', doc: '#2b579a', docx: '#2b579a', xls: '#1d6f42', xlsx: '#1d6f42', ppt: '#c43e1c', pptx: '#c43e1c',
+};
+const KIND_COLORS = { image: '#21877f', pdf: '#ce4949', video: '#8661bf', audio: '#bf5788', archive: '#9b783d', text: '#5b84b7' };
+
 export function fileIcon(entry) {
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 80 80'); svg.setAttribute('aria-hidden', 'true'); svg.classList.add('file-icon');
@@ -35,19 +54,26 @@ export function fileIcon(entry) {
     shape(svg, 'path', { d: 'M5 20Q5 16 10 16H30L36 22H69Q75 22 75 28V61Q75 66 70 66H10Q5 66 5 61Z', fill: '#4fa8df', stroke: '#3597cf', 'stroke-width': .7 });
     shape(svg, 'path', { d: 'M7 30Q7 27 11 27H69Q73 27 73 31V61Q73 64 69 64H11Q7 64 7 60Z', fill: '#80c9f1' });
     shape(svg, 'path', { d: 'M9 29H70', stroke: '#c2e9fc', 'stroke-width': 1.3 });
-  } else {
-    shape(svg, 'path', { d: 'M19 8H48L63 23V68Q63 72 59 72H21Q17 72 17 68V12Q17 8 19 8Z', fill: '#fff', stroke: '#cbd0d6', 'stroke-width': 1 });
-    shape(svg, 'path', { d: 'M48 8V23H63', fill: '#e9edf2', stroke: '#cbd0d6', 'stroke-width': 1 });
-    const colors = { image: '#21877f', pdf: '#ce4949', video: '#8661bf', audio: '#bf5788', archive: '#9b783d', text: '#5b84b7' };
-    const color = colors[entry.kind] ?? '#84909c';
-    if (entry.kind === 'image') {
-      shape(svg, 'rect', { x: 25, y: 30, width: 30, height: 23, rx: 2, fill: '#d5eee8' });
-      shape(svg, 'path', { d: 'M25 50l9-10 7 7 6-5 8 10H25Z', fill: color }); shape(svg, 'circle', { cx: 46, cy: 36, r: 3, fill: color });
-    } else {
-      shape(svg, 'path', { d: 'M26 32H45M26 38H53M26 44H53M26 50H42', stroke: '#d4dae2', 'stroke-width': 2 });
-    }
-    const ext = entry.name.includes('.') ? entry.name.split('.').at(-1).slice(0, 5).toUpperCase() : 'FILE';
-    const label = shape(svg, 'text', { x: 40, y: 63, fill: color, 'font-size': 9, 'font-family': 'system-ui, sans-serif', 'font-weight': 700, 'text-anchor': 'middle' }); label.textContent = ext;
+    return svg;
   }
+  shape(svg, 'path', { d: 'M19 8H48L63 23V68Q63 72 59 72H21Q17 72 17 68V12Q17 8 19 8Z', fill: '#fff', stroke: '#cbd0d6', 'stroke-width': 1 });
+  shape(svg, 'path', { d: 'M48 8V23H63', fill: '#e9edf2', stroke: '#cbd0d6', 'stroke-width': 1 });
+  const extKey = entry.name.includes('.') ? entry.name.split('.').at(-1).toLowerCase() : '';
+  const color = EXTENSION_COLORS[extKey] ?? KIND_COLORS[entry.kind] ?? '#84909c';
+  if (entry.kind === 'image') {
+    shape(svg, 'rect', { x: 25, y: 28, width: 30, height: 23, rx: 2, fill: '#d5eee8' });
+    shape(svg, 'path', { d: 'M25 48l9-10 7 7 6-5 8 10H25Z', fill: color }); shape(svg, 'circle', { cx: 46, cy: 34, r: 3, fill: color });
+  } else {
+    shape(svg, 'path', { d: 'M26 30H45M26 36H53M26 42H53M26 48H42', stroke: '#d4dae2', 'stroke-width': 2 });
+  }
+  const ext = entry.name.includes('.') ? entry.name.split('.').at(-1).slice(0, 5).toUpperCase() : 'FILE';
+  // Recognised extensions and media kinds get a solid colour chip; plain or
+  // unknown files keep the quiet grey label.
+  const chipped = Boolean(EXTENSION_COLORS[extKey] ?? (entry.kind !== 'text' && KIND_COLORS[entry.kind]));
+  const label = chipped
+    ? shape(svg, 'text', { x: 40, y: 63.4, fill: '#fff', 'font-size': 9, 'font-family': 'system-ui, sans-serif', 'font-weight': 700, 'text-anchor': 'middle' })
+    : shape(svg, 'text', { x: 40, y: 63, fill: '#84909c', 'font-size': 9, 'font-family': 'system-ui, sans-serif', 'font-weight': 700, 'text-anchor': 'middle' });
+  label.textContent = ext;
+  if (chipped) svg.insertBefore(shape(svg, 'rect', { x: 20, y: 53, width: 40, height: 14, rx: 3.5, fill: color }), label);
   return svg;
 }

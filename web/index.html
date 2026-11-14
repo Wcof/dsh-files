@@ -33,7 +33,8 @@
           <button id="new-file" data-i18n="newFile">新建文本文件</button><div class="menu-separator"></div>
           <button id="copy" data-i18n="copy">复制</button><button id="cut" data-i18n="cut">剪切</button><button id="paste" data-i18n="paste">粘贴</button><button id="rename" data-i18n="rename">重命名</button><button id="duplicate" data-i18n="duplicate">制作副本</button>
           <div class="menu-separator"></div><button id="zip" data-i18n="zip">压缩为 ZIP</button><button id="extract" data-i18n="extract">解压到文件夹</button>
-          <button id="favorite" data-i18n="favoriteFolder">添加到侧栏</button><button id="copy-path" data-i18n="copyPath">复制路径</button><button id="open" data-i18n="open">用系统应用打开</button><button id="reveal" data-i18n="reveal">在系统文件管理器中显示</button>
+          <button id="favorite" data-i18n="favoriteFolder">添加到侧栏</button><button id="copy-path" data-i18n="copyPath">复制路径</button><button id="open" data-i18n="open">用系统应用打开</button><button id="editor-open" data-i18n="editorOpen">用编辑器打开</button><button id="reveal" data-i18n="reveal">在系统文件管理器中显示</button>
+          <div class="menu-separator"></div><button id="disk-usage" data-i18n="diskUsage">磁盘占用透视</button><button id="open-trash" data-i18n="openTrash">打开废纸篓</button>
           <div class="menu-separator"></div><button id="trash" class="danger" data-i18n="trash">移到废纸篓</button>
         </div></details>
         <button id="toggle-preview" class="icon-button" data-label="togglePreview" data-icon="preview" aria-pressed="false"></button>
@@ -67,5 +68,10 @@
     <footer><button id="place-cancel" class="button" type="button" data-i18n="cancel">取消</button><button id="place-save" class="button primary" type="submit" data-i18n="save">保存</button></footer>
   </form></dialog>
   <dialog id="dialog" aria-labelledby="dialog-title"><form id="dialog-form"><h2 id="dialog-title"></h2><p id="dialog-copy"></p><label id="dialog-label" for="dialog-input"></label><input id="dialog-input" autocomplete="off" maxlength="4096"><footer><button type="button" id="dialog-cancel" class="button" data-i18n="cancel">取消</button><button id="dialog-submit" class="button primary" type="submit"></button></footer></form></dialog>
+  <dialog id="disk-dialog" aria-labelledby="disk-title">
+    <h2 id="disk-title"></h2><p id="disk-path" class="disk-path"></p><p id="disk-summary" class="muted"></p>
+    <div id="disk-list" class="disk-list"></div>
+    <footer class="disk-footer"><button id="disk-up" class="button small" type="button" data-i18n="up">上一级</button><button id="disk-open" class="button small" type="button" data-i18n="diskOpenDir">打开此目录</button><span class="disk-spacer"></span><button id="disk-close" class="button" type="button" data-i18n="diskClose">关闭</button></footer>
+  </dialog>
   <script type="module" src="./app.js"></script>
 </body></html>

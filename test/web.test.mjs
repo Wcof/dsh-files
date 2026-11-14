@@ -5,8 +5,9 @@ import vm from 'node:vm';
 import http from 'node:http';
 import { once } from 'node:events';
 import { registerFilesPage } from '../src/adapters/dsh-web.js';
-import { upload, toBase64 } from '../web/api.js';
+import { upload, toBase64, formatBytes } from '../web/api.js';
 import { messages } from '../web/locale.js';
+import { selectionSummary, pathsForDrop } from '../web/view-state.js';
 import { makeSandbox, cleanSandbox } from './helpers.mjs';
 
 test('file page serves only bundled assets and rejects cross-origin or mutating requests', async (t) => {
@@ -89,7 +90,8 @@ async function pageHarness(overrides = {}) {
     document, TextEncoder, AbortController, URL,
     navigator: { pdfViewerEnabled: true },
     rawPreviewUrl: value => `/raw?path=${encodeURIComponent(value)}`,
-    toBase64, parentOf: value => value.slice(0, value.lastIndexOf('/')), t: key => key,
+    toBase64, formatBytes, parentOf: value => value.slice(0, value.lastIndexOf('/')), t: key => key,
+    selectionSummary, pathsForDrop,
     ...overrides,
   });
   vm.runInContext(`${source}\nrenderPreview = () => {}; load = async () => {}; globalThis.page = { state, controls, saveText, dirty, choose, closePreview, actionDisabled, menuLabels: MENU_LABELS };`, context);

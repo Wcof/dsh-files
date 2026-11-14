@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { makeSandbox, cleanSandbox, writeText } from './helpers.mjs';
 import { ErrorCode, FilePluginError } from '../src/index.js';
@@ -256,6 +257,30 @@ test('injected locate accelerator is used, sandboxed and falls back when broken'
     assert.ok(fallback.entries.some((entry) => entry.name === 'needle.txt'));
   } finally {
     await cleanSandbox(sandbox);
+  }
+});
+
+test('locate falls back to traversal when every accelerator path is unauthorized', async () => {
+  // Spotlight indexes the whole disk; a home-scoped policy rejects most of it.
+  // The accelerator must not report an empty search in that case.
+  const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-locate-out-'));
+  const sandbox = await makeSandbox({
+    tools: {
+      locateHandler: () => [
+        path.join(outside, 'needle.txt'),
+        '/etc/passwd',
+      ],
+    },
+  });
+  try {
+    writeText(path.join(sandbox.dir, 'needle.txt'), 'needle');
+    writeText(path.join(outside, 'needle.txt'), 'outside');
+    const result = await sandbox.plugin.call('locate', { query: 'needle' });
+    assert.ok(result.entries.some((entry) => entry.name === 'needle.txt'), 'built-in traversal must run');
+    assert.ok(result.entries.every((entry) => !entry.path.startsWith(outside)), 'unauthorized candidates stay out');
+  } finally {
+    await cleanSandbox(sandbox);
+    await fsp.rm(outside, { recursive: true, force: true });
   }
 });
 

@@ -59,6 +59,26 @@ export function selectionFor(entries, previous, index, anchor, event, platform, 
   return { selected: next, anchor: event.shiftKey && anchor >= 0 ? anchor : index };
 }
 
+/** Status-bar aggregate for the current selection: files counted, folders not. */
+export function selectionSummary(chosen) {
+  let size = 0;
+  let files = 0;
+  let folders = 0;
+  for (const entry of chosen) {
+    if (entry.isDir) folders += 1;
+    else { files += 1; size += Number(entry.size) || 0; }
+  }
+  return { count: files + folders, size, files, folders };
+}
+
+/**
+ * Drop candidates for dragging onto a folder: skip the target itself and any
+ * of its ancestors — moving a folder into its own subtree is always refused.
+ */
+export function pathsForDrop(paths, targetPath) {
+  return (paths ?? []).filter(path => path !== targetPath && !targetPath.startsWith(`${path}/`) && !targetPath.startsWith(`${path}\\`));
+}
+
 /** Map OS conventions without intercepting typing in editors or form controls. */
 export function shortcutAction(event, platform, editing = false) {
   const mac = platform === 'darwin', mod = mac ? event.metaKey : event.ctrlKey, key = event.key.toLowerCase();
@@ -66,6 +86,11 @@ export function shortcutAction(event, platform, editing = false) {
   if (mod && key === 'l') return 'path';
   if (mod && key === 'f') return 'search';
   if (editing) return null;
+  // Fanbox-style browsing keys: ⌘B sidebar, / filter focus, plain Backspace up.
+  if (mod && key === 'b') return 'toggle-sidebar';
+  if (key === '/' && !mod && !event.altKey) return 'search';
+  if (mod && key === 'enter') return 'editor';
+  if (key === 'backspace' && !mod && !event.altKey && !event.shiftKey) return 'up';
   if (mod && event.shiftKey && key === 'n') return 'new-folder';
   if (mod && ['1', '2'].includes(key)) return key === '1' ? 'grid-view' : 'list-view';
   if (mod && ['a', 'c', 'x', 'v'].includes(key)) return ({ a: 'select-all', c: 'copy', x: 'cut', v: 'paste' })[key];

@@ -107,7 +107,7 @@ NDJSON over stdio（一行一个 JSON），响应沿用原 wire envelope `{id, o
 
 ```jsonc
 {"id":"1","method":"initialize","params":{"client":"zcode"}}
-{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.2.1","backend":"local","tools":25}}
+{"id":"1","ok":true,"result":{"protocolVersion":1,"pluginVersion":"0.2.2","backend":"local","tools":25}}
 
 {"id":"2","method":"tools/list"}
 {"id":"2","ok":true,"result":{"tools":[...]}}

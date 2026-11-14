@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parentPath, pathSegments, normalizePathInput, readView, writeView, selectionFor, shortcutAction } from '../web/view-state.js';
+import { parentPath, pathSegments, normalizePathInput, readView, writeView, selectionFor, selectionSummary, pathsForDrop, shortcutAction } from '../web/view-state.js';
 import { validWindowsName } from '../src/core/access-policy.js';
 import { makeSandbox, cleanSandbox, writeText } from './helpers.mjs';
 import path from 'node:path';
@@ -69,4 +69,32 @@ test('directory and search sorting happens before pagination with folders first'
     }
     await assert.rejects(sandbox.plugin.call('search', { path: root, query: 'match', sortBy: 'invalid' }));
   } finally { await cleanSandbox(sandbox); }
+});
+
+test('selection summary counts file bytes and folder totals separately', () => {
+  const chosen = [
+    { isDir: false, size: 100 },
+    { isDir: false, size: 23 },
+    { isDir: true, size: 4096 },
+  ];
+  assert.deepEqual(selectionSummary(chosen), { count: 3, size: 123, files: 2, folders: 1 });
+  assert.deepEqual(selectionSummary([{ isDir: true }]), { count: 1, size: 0, files: 0, folders: 1 });
+  assert.deepEqual(selectionSummary([]), { count: 0, size: 0, files: 0, folders: 0 });
+});
+
+test('drop candidates refuse the target itself and its ancestors', () => {
+  const paths = ['/a', '/a/b', '/a/b/c.txt', '/d.txt'];
+  // Ancestors of the target are refused (own-subtree move); descendants are
+  // kept — dropping them back into their parent is a no-op the batch skips.
+  assert.deepEqual(pathsForDrop(paths, '/a/b/c.txt'), ['/d.txt']);
+  assert.deepEqual(pathsForDrop(paths, '/a/b'), ['/a/b/c.txt', '/d.txt']);
+  assert.deepEqual(pathsForDrop(paths, '/a'), ['/a/b', '/a/b/c.txt', '/d.txt']);
+  assert.deepEqual(pathsForDrop(paths, '/e'), paths);
+  assert.deepEqual(pathsForDrop(undefined, '/e'), []);
+});
+
+test('drop candidates honour Windows separators when filtering ancestors', () => {
+  const paths = ['C:\\a', 'C:\\a\\b', 'C:\\a\\b\\c.txt', 'C:\\d.txt'];
+  assert.deepEqual(pathsForDrop(paths, 'C:\\a\\b'), ['C:\\a\\b\\c.txt', 'C:\\d.txt']);
+  assert.deepEqual(pathsForDrop(paths, 'C:\\a\\b\\c.txt'), ['C:\\d.txt']);
 });

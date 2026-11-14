@@ -13,7 +13,7 @@
 
 ## 元信息与浏览
 
-`0.2.1` 的 DSH 文件页面复用下表命令，不新增 wire 命令。提供图标／列表、三档尺寸、四种排序、标准多选和系统快捷键；覆盖目录与名称/内容搜索、文本预览编辑、分块上传、复制移动、重命名、废纸篓和归档。页面通过同源 `/agent/files/raw` 整文件流预览图片、PDF、音视频，不受 `maxPreviewBytes` 限制；下表的 `*_preview` 命令仍是有界工具输出，并作为旧宿主的回退。PDF 仍依赖浏览器原生查看器，不可用时显示说明与系统打开入口。
+`0.2.2` 的 DSH 文件页面复用下表命令，不新增 wire 命令。提供图标／列表、三档尺寸、四种排序、标准多选和系统快捷键；覆盖目录与名称/内容搜索、⌘K 全局搜索（`locate`／`search`）、Markdown／HTML／代码／CSV 预览、文本预览编辑、分块上传、复制移动、列表内拖拽移动复制、重命名、废纸篓与归档。页面通过同源 `/agent/files/raw` 整文件流预览图片、PDF、音视频与沙箱 HTML，不受 `maxPreviewBytes` 限制；下表的 `*_preview` 命令仍是有界工具输出，并作为旧宿主的回退。PDF 仍依赖浏览器原生查看器，不可用时显示说明与系统打开入口。
 每个带路径的 SSE 连接独立持有监听订阅；多个页面与工具共享同目录的底层 watcher，只有最后一个订阅释放才关闭。
 
 | 命令 | 输入 | 输出 | 状态 | 说明 |
@@ -38,7 +38,7 @@
 | 命令 | 输入 | 输出 | 状态 | 说明 |
 |---|---|---|---|---|
 | `search` | `path, query, offset, limit, recursive, content, showHidden, sortBy?, sortDir?` | `SearchResult` | 一致 | 可选展示排序（先排序再分页），默认模糊名称评分 + 有界内容搜索（text ≤ 2 MiB / PDF ≤ 20 MiB）；深度 8、4 秒预算、10 万结果上限；`hasMore/truncated/contentUnavailable` |
-| `locate` | `path?, query, offset, limit, recursive, content, showHidden, sortBy?, sortDir?` | `SearchResult` | 增强 | 支持可选展示排序；默认从配置的 roots 遍历；注入 `locateHandler` 时优先消费其候选路径（每条仍经过访问策略与 stat 校验），钩子缺失 / 被禁用 / 抛错时静默回退内置遍历，不依赖 macOS 专有索引 |
+| `locate` | `path?, query, offset, limit, recursive, content, showHidden, sortBy?, sortDir?` | `SearchResult` | 增强 | 支持可选展示排序；默认从配置的 roots 遍历；注入 `locateHandler` 时优先消费其候选路径（每条仍经过访问策略与 stat 校验），钩子缺失 / 被禁用 / 抛错或候选全部未通过授权（如全盘 Spotlight 索引超出插件根）时静默回退内置遍历，不依赖 macOS 专有索引 |
 | `search_cancel` | `requestId` | `{cancelled}` | 一致 | 由 `FileService` 持 AbortSignal（原由 main 循环持 token） |
 | `locate_cancel` | `requestId` | `{cancelled}` | 增强 | 原 `main.rs` 已处理但 `validate_request` 白名单漏掉；插件补齐白名单 |
 | `preview_cancel` | `requestId` | `{cancelled}` | 一致 | 同上 |

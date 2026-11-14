@@ -1,6 +1,6 @@
 {
   "name": "@dsh/files",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "File manager page and native file tools for DeepSeek Harness, with shared APIs for zcode, MCP and other agents.",
   "type": "module",
   "license": "MIT",

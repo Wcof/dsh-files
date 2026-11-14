@@ -1,4 +1,4 @@
-# 插件契约 · @dsh/files v0.2.1
+# 插件契约 · @dsh/files v0.2.2
 
 > 本文是插件的正式契约：边界、对外接口、输入输出、依赖项、配置项。
 > 命令级行为对照见 [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md)，智能体接入见
@@ -341,7 +341,23 @@ node bin/cli.mjs describe
 
 页面提供图标／列表、三档尺寸、四种排序和可收起预览。`web/view-state.js` 统一展示偏好、Windows 盘符／UNC 与 POSIX 导航、系统快捷键与选择规则；只持久化视图、尺寸、排序、预览开关和主题。动态名称与路径用 DOM 文本显示。未保存文本切换选择或关闭预览必须确认；取消保持草稿，条件保存继续使用 `expectedMtime`。预览区关闭是纯界面操作，不受进行中的文件操作阻塞；右键菜单按文件类型生成，直接调用与工具栏共享的动作表，并兼容只派发 `pointerup` 的宿主。
 
-本地后端的 `backendCapabilities.platform` 返回宿主平台，页面据此采用 Cmd／Ctrl、重命名和回收站文案。`search`／`locate` 可选 `sortBy`、`sortDir`；提供排序键时在有界候选集合中先排序再分页，不提供时保持相关度排序。Windows 创建名称拒绝保留设备名、流分隔符和尾点／尾空格；回收站失败返回错误，不降级为永久删除。Windows 跨盘路径压缩明确拒绝。
+列表按 `path → DOM 节点` 键控增量渲染：选择变化与监听刷新复用未变化条目的节点（含已解码的缩略图 `<img>`），行为指纹覆盖名称、类型、时间、大小、项目徽章与查询上下文。图片条目用同源 raw 路由懒加载缩略图，解码失败回退矢量图标；文件夹条目在 `list_dir` 传入 `probeProjects` 时携带 node／web／python／rust／go／git 项目徽章（后端浅探至多 80 个子目录）。
+
+预览按类型分流：Markdown 由 `web/markdown.js` 用受控 DOM 渲染（不解析 HTML 字符串；链接仅允许 http(s)／mailto，本地图片相对路径解析后走 raw 路由，外链 https 图片交由 CSP 放行）；代码文件由 `web/highlight.js` 输出纯文本 span（未知语言退回纯文本）；CSV／TSV 渲染为有界表格（前 500 行）；HTML／HTM 渲染进 `sandbox` iframe；图片预览铺透明棋盘格并可进入灯箱（滚轮缩放、点击空白关闭）。列表键盘与 `⌘K` 全局搜索浮层、`⌘B` 侧栏、`/` 聚焦搜索、Backspace 上一级、`⌘↵` 编辑器打开共用 `view-state` 快捷键表。
+
+“磁盘占用透视”面板调用既有 `disk_usage` 命令，按条形榜展示前 60 项并支持下钻、上一级与打开目录；面板只读，不写文件系统。
+
+列表支持内部拖拽组织：把条目拖到文件夹上调用 `move_batch`（按住 Alt／⌥ 为 `copy_batch`），拖到空白处目标为当前目录；目标文件夹拖入时高亮，候选路径由 `view-state.pathsForDrop` 过滤掉目标自身与其祖先（拖入自身子树一律拒绝），后代拖回父目录交由批量层跳过 no-op。外部文件拖入（`Files` 类型）仍走上传，两类拖拽按 `dataTransfer` 类型区分。只读模式下条目不可拖。移动完成后应用剪贴板同步移除已移走的路径。新建文件夹／文件与上传完成后，页面滚动并选中新条目（`revealEntry`）；长列表滚动接近底部时自动加载下一页，“加载更多”按钮保留兜底。状态栏选中汇总由 `view-state.selectionSummary` 计算：文件夹不计入字节合计。预览元数据展示 `entry.btime` 的创建时间（平台不提供时显示占位符）；“打开废纸篓”走 `open_trash`（os 能力门控），不经页面暴露回收站内容。
+
+### 全局搜索浮层（⌘K）
+
+`web/quick-search.js` 的浮层使用两条既有命令：范围「全部位置」调用 `locate`（文件名模糊，`content: true` 时全文），范围「当前目录」调用 `search`；`内容:`／`content:` 前缀（含全角冒号）切换全文模式。每次输入取消上一个请求（复用 wire 级 cancel 命令），仅展示第一页（60 条），截断时提示；结果高亮为贪心子序列 `<mark>`，全文模式附带后端返回的命中行。Enter 交回页面导航并选中预览，`⌘↵` 交给 `editor` 命令（无系统命令时回退为打开预览）。浮层不持久化任何输入。
+
+### HTML 预览边界
+
+`/agent/files/raw` 对 `text` 类中的 `.html`／`.htm` 返回 `text/html`，并附 `Content-Security-Policy: sandbox allow-scripts allow-forms allow-modals allow-popups` 响应头：文档无论经 iframe 还是顶层直接导航，都运行在不透明源上，拿不到 cookie、凭据与同源文件 API。响应体有界（4 MiB，超出明确报错），并在 `<head>` 注入一段带 `data-dsh-preview` 标记的引导脚本，仅把相对／`file:` 的媒体 `src` 改写到 raw 路由；其余 HTML 字节不变，不支持 Range。页面侧 iframe 再叠加 `sandbox` 属性与 `frame-src 'self'` CSP；页面 CSP 同时放行 `https:` 图片供 Markdown 外链图渲染。
+
+本地后端的 `backendCapabilities.platform` 返回宿主平台，页面据此采用 Cmd／Ctrl、重命名和回收站文案。`search`／`locate` 可选 `sortBy`、`sortDir`；提供排序键时在有界候选集合中先排序再分页，不提供时保持相关度排序。`locate` 的宿主加速钩子（如 macOS `mdfind`）返回的候选全部未通过授权时，回退到内置有界遍历而不是返回空结果。Windows 创建名称拒绝保留设备名、流分隔符和尾点／尾空格；回收站失败返回错误，不降级为永久删除。Windows 跨盘路径压缩明确拒绝。
 
 ### 侧栏收藏位置
 

@@ -11,6 +11,9 @@ const assets = new Map([
   ['view-state.js', ['view-state.js', 'text/javascript; charset=utf-8']],
   ['places-state.js', ['places-state.js', 'text/javascript; charset=utf-8']],
   ['sidebar.js', ['sidebar.js', 'text/javascript; charset=utf-8']],
+  ['markdown.js', ['markdown.js', 'text/javascript; charset=utf-8']],
+  ['highlight.js', ['highlight.js', 'text/javascript; charset=utf-8']],
+  ['quick-search.js', ['quick-search.js', 'text/javascript; charset=utf-8']],
   ['styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['icon.svg', ['icon.svg', 'image/svg+xml']],
 ]);
@@ -41,7 +44,9 @@ export function registerFilesPage(ctx) {
         response.writeHead(200, {
           'Content-Type': asset[1], 'Content-Length': data.length, 'Cache-Control': 'no-store',
           'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-          'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; object-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+          // frame-src 'self' powers the sandboxed live HTML preview; https
+          // images let Markdown documents reference external picture hosts.
+          'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: https:; media-src 'self' blob:; object-src 'self' blob:; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
         });
         response.end(request.method === 'HEAD' ? undefined : data);
       } catch {
